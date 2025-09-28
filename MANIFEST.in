@@ -1,0 +1,5 @@
+include README.md
+recursive-include octoprint_bambu_connector/templates *
+recursive-include octoprint_bambu_connector/translations *
+recursive-include octoprint_bambu_connector/static *
+recursive-include octoprint_bambu_connector/pybambu *

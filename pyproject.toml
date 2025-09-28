@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "OctoPrint-BambuConnector"
+version = "0.0.1"
+description = "Enables connecting to Bambu printers."
+authors = [
+    {name = "jneilliii", email = "jneilliii+github@gmail.com"}
+]
+readme = {file = "README.md", content-type = "markdown"}
+dynamic = [
+    "license"
+]
+
+requires-python = ">=3.11, <4"
+
+# any additional requirements (besides OctoPrint) should be listed here
+dependencies = ["paho-mqtt", "beautifulsoup4", "python-dateutil", "pillow"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = [
+    "octoprint_bambu_connector",
+    "octoprint_bambu_connector.*"
+]
+
+[project.entry-points."octoprint.plugin"]
+bambu_connector = "octoprint_bambu_connector"
+
+[project.urls]
+Homepage = "https://github.com/jneilliii/OctoPrint-BambuConnector"
+
+[project.optional-dependencies]
+develop = [
+    "go-task-bin"
+]
