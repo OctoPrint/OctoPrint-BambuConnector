@@ -15,6 +15,8 @@ from octoprint.printer.job import PrintJob
 
 from .pybambu.bambu_client import BambuClient
 from .worker import AsyncTaskWorker
+import os
+from datetime import datetime, timezone
 
 from .client import (
     Coordinate,
@@ -92,6 +94,8 @@ class ConnectedBambuPrinter(
 
         self._progress: JobProgress = None
         self._job_cache: str = None
+
+        self._file_list_cache: list[FileInfo] = []
 
         self._printer_state: PrinterState = PrinterState.UNKNOWN
         self._idle_state: IdleState = IdleState.UNKNOWN
@@ -376,12 +380,26 @@ class ConnectedBambuPrinter(
 
     @property
     def printer_files_mounted(self) -> bool:
-        return self._client is not None
+        return self._client is not None and self._client.ftp_enabled
 
     def refresh_printer_files(self, blocking=False, timeout=10, *args, **kwargs) -> None:
-        future = self._client.refresh_files()
-        if blocking:
-            future.result(timeout=timeout)
+        if self._client is not None and self._client.connected:
+            self._file_list_cache.clear()
+            ftp_search_paths = ['/cache/', '/']
+            try:
+                ftp = self._client.ftp_connection()
+                for path in ftp_search_paths:
+                    for file_name in ftp.nlst(path):
+                        _, ext = os.path.splitext(file_name)
+                        if ext in [".3mf"]:
+                            size = ftp.size(file_name)
+                            date_response = ftp.sendcmd(f"MDTM {file_name}").replace("213 ", "")
+                            timestamp = datetime.strptime(date_response, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+                            file = FileInfo(path=file_name, size=size, modified=timestamp.timestamp(), permissions="")
+                            self._file_list_cache.append(file)
+            except Exception as e:
+                self._logger.error(f"FTP list Exception. Type: {type(e)} Args: {e}")
+                pass
 
     def get_printer_files(self, refresh=False, recursive=False, *args, **kwargs):
         if not self.printer_files_mounted:
@@ -390,7 +408,7 @@ class ConnectedBambuPrinter(
         if refresh:
             self.refresh_printer_files(blocking=True)
 
-        return [self._to_printer_file(f) for f in self._client.current_files]
+        return [self._to_printer_file(f) for f in self._file_list_cache]
 
     def create_printer_folder(self, target: str, *args, **kwargs) -> None:
         self._client.create_folder(target).result()
