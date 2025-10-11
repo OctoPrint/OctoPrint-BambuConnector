@@ -10,6 +10,7 @@ from octoprint.printer.connection import (
     ConnectedPrinter,
     ConnectedPrinterState,
     FirmwareInformation,
+    ConnectedPrinterListenerMixin,
 )
 from octoprint.printer.job import PrintJob
 
@@ -24,7 +25,7 @@ from .client import (
     IdleState,
     BambuState,
     BambuClientConnector,
-    BambuClientListener,
+    # BambuClientListener,
     PrinterState,
     PrintStats,
     SDCardStats,
@@ -45,17 +46,17 @@ GCODE_STATE_LOOKUP = {
 
 
 class ConnectedBambuPrinter(
-    ConnectedPrinter, PrinterFilesMixin, BambuClientListener
+    ConnectedPrinter, PrinterFilesMixin, ConnectedPrinterListenerMixin
 ):
     connector = "bambu"
-    name = "Bambu (mqtt)"
+    name = "Bambu (MQTT)"
 
     storage_capabilities = StorageCapabilities(
         write_file=True,
         read_file=True,
         remove_file=True,
-        copy_file=True,
-        move_file=True,
+        copy_file=False,
+        move_file=False,
         add_folder=False,
         remove_folder=False,
         copy_folder=False,
@@ -87,7 +88,7 @@ class ConnectedBambuPrinter(
         self._access_code = kwargs.get("access_code")
 
         self._client = None
-        # self._listener = BambuClientListener()
+        # self._listener = ConnectedBambuPrinterListenerMixin()
 
         self._state = ConnectedPrinterState.CLOSED
         self._error = None
@@ -95,7 +96,7 @@ class ConnectedBambuPrinter(
         self._progress: JobProgress = None
         self._job_cache: str = None
 
-        self._file_list_cache: list[FileInfo] = []
+        self._files: list[FileInfo] = []
 
         self._printer_state: PrinterState = PrinterState.UNKNOWN
         self._idle_state: IdleState = IdleState.UNKNOWN
@@ -117,6 +118,10 @@ class ConnectedBambuPrinter(
             return
 
         old_state = self.state
+
+        if old_state == ConnectedPrinterState.CONNECTING and state == ConnectedPrinterState.OPERATIONAL:
+            self._listener.on_printer_files_refreshed(self.get_printer_files(refresh=True))
+            self._logger.info(f"Files: {self._files}")
 
         super().set_state(state, error=error)
 
@@ -178,7 +183,12 @@ class ConnectedBambuPrinter(
         self._logger.info("Connecting to Bambu")
         try:
             if self.worker.loop.is_running():
-                self.worker.run_coroutine_threadsafe(self._client.connect(self.on_bambu_client_update))
+                future = self.worker.run_coroutine_threadsafe(self._client.try_connection())
+                success = future.result()
+                if success:
+                    self.worker.run_coroutine_threadsafe(self._client.connect(self.on_bambu_client_update))
+                else:
+                    self.set_state(ConnectedPrinterState.CLOSED)
             else:
                 self._logger.debug("loop not running")
                 return False
@@ -296,7 +306,7 @@ class ConnectedBambuPrinter(
             and self.state == ConnectedPrinterState.OPERATIONAL
         )
 
-    ##~~ Job handling
+    # ~~ Job handling
 
     def supports_job(self, job: PrintJob) -> bool:
         if not valid_file_type(job.path, type="machinecode"):
@@ -376,7 +386,7 @@ class ConnectedBambuPrinter(
         self.state = ConnectedPrinterState.CANCELLING
         self._client.cancel_print().result()
 
-    ##~~ PrinterFilesMixin
+    # ~~ PrinterFilesMixin
 
     @property
     def printer_files_mounted(self) -> bool:
@@ -384,7 +394,7 @@ class ConnectedBambuPrinter(
 
     def refresh_printer_files(self, blocking=False, timeout=10, *args, **kwargs) -> None:
         if self._client is not None and self._client.connected:
-            self._file_list_cache.clear()
+            self._files.clear()
             ftp_search_paths = ['/cache/', '/']
             try:
                 ftp = self._client.ftp_connection()
@@ -396,7 +406,7 @@ class ConnectedBambuPrinter(
                             date_response = ftp.sendcmd(f"MDTM {file_name}").replace("213 ", "")
                             timestamp = datetime.strptime(date_response, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
                             file = FileInfo(path=file_name, size=size, modified=timestamp.timestamp(), permissions="")
-                            self._file_list_cache.append(file)
+                            self._files.append(file)
             except Exception as e:
                 self._logger.error(f"FTP list Exception. Type: {type(e)} Args: {e}")
                 pass
@@ -408,7 +418,7 @@ class ConnectedBambuPrinter(
         if refresh:
             self.refresh_printer_files(blocking=True)
 
-        return [self._to_printer_file(f) for f in self._file_list_cache]
+        return [self._to_printer_file(f) for f in self._files]
 
     def create_printer_folder(self, target: str, *args, **kwargs) -> None:
         self._client.create_folder(target).result()
@@ -452,7 +462,7 @@ class ConnectedBambuPrinter(
     def move_printer_file(self, source, target, *args, **kwargs):
         self._client.move_path(source, target).result()
 
-    ##~~ MoonrakerClientListener interface
+    # ~~ BambuClientListener interface
 
     def on_bambu_connected(self):
         self.state = ConnectedPrinterState.OPERATIONAL
