@@ -390,7 +390,8 @@ class ConnectedBambuPrinter(
 
     @property
     def printer_files_mounted(self) -> bool:
-        return self._client is not None and self._client.ftp_enabled
+        # return self._client is not None and self._client.ftp_enabled
+        return True
 
     def refresh_printer_files(self, blocking=False, timeout=10, *args, **kwargs) -> None:
         if self._client is not None and self._client.connected:
