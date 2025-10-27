@@ -1,6 +1,6 @@
-import threading
-import logging
 import asyncio
+import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("octoprint.plugins.bambu_connector.worker")
@@ -8,6 +8,8 @@ logger = logging.getLogger("octoprint.plugins.bambu_connector.worker")
 
 class AsyncTaskWorker:
     def __init__(self):
+        self._running = threading.Event()
+
         self._thread = threading.Thread(
             target=self.run,
             name=str(self.__class__),
@@ -15,6 +17,10 @@ class AsyncTaskWorker:
         self._thread.daemon = True
         logger.info(f"Starting thread {self._thread.name}")
         self._thread.start()
+        self._running.wait()
+
+    def _set_running(self):
+        self._running.set()
 
     def run(self):
         self.loop = asyncio.new_event_loop()
@@ -22,6 +28,7 @@ class AsyncTaskWorker:
         self.loop.set_default_executor(
             ThreadPoolExecutor(thread_name_prefix="bambu_worker")
         )
+        self.loop.call_soon(self._set_running)
         self.loop.run_forever()
 
     def shutdown(self, **kwargs):
