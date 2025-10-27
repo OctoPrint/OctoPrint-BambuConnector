@@ -33,13 +33,14 @@ class BambuConnectorPlugin(
             backupCount=3,
             delay=True,
         )
-        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(message)s"))
         handler.setLevel(logging.DEBUG)
 
-        for logger in ("octoprint.plugins.bambu_connector.mqtt.console", ""):
+        for target in ("octoprint_bambu_connector.vendor.pybambu", "paho.mqtt.client"):
+            logger = logging.getLogger(target)
             logger.addHandler(handler)
             logger.setLevel(logging.DEBUG)
-            logger.propagate = True
+            logger.propagate = False
 
     # ~~ Template Plugin mixin
 
