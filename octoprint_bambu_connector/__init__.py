@@ -36,10 +36,10 @@ class BambuConnectorPlugin(
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
         handler.setLevel(logging.DEBUG)
 
-        logger = logging.getLogger("octoprint.plugins.bambu_connector.mqtt.console")
-        logger.addHandler(handler)
-        logger.setLevel(logging.DEBUG)
-        logger.propagate = True
+        for logger in ("octoprint.plugins.bambu_connector.mqtt.console", ""):
+            logger.addHandler(handler)
+            logger.setLevel(logging.DEBUG)
+            logger.propagate = True
 
     # ~~ Template Plugin mixin
 

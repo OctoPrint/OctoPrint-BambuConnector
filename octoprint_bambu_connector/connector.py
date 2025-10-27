@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Literal, Optional, cast
 
 from octoprint.events import Events, eventManager
-from octoprint.filemanager import FileDestinations, valid_file_type
+from octoprint.filemanager import FileDestinations
 from octoprint.filemanager.storage import StorageCapabilities
 from octoprint.printer import JobProgress, PrinterFile, PrinterFilesMixin
 from octoprint.printer.connection import (
@@ -22,6 +22,8 @@ from octoprint.printer.job import PrintJob
 from octoprint.schema import BaseModel
 
 from .vendor.pybambu.bambu_client import BambuClient
+from .vendor.pybambu.commands import PAUSE, RESUME, STOP
+from .vendor.pybambu.const import Printers
 from .worker import AsyncTaskWorker
 
 GCODE_STATE_LOOKUP = {
@@ -38,6 +40,7 @@ GCODE_STATE_LOOKUP = {
 
 RELEVANT_EXTENSIONS = (".gcode", ".gco", ".gcode.3mf")
 IGNORED_FOLDERS = ("/logger", "/recorder", "/timelapse", "/image", "/ipcam")
+MODELS_SDCARD_MOUNT = (Printers.X1, Printers.X1C, Printers.X1E)
 
 
 class FileInfo(BaseModel):
@@ -173,7 +176,7 @@ class ConnectedBambuPrinter(
     ConnectedPrinter, PrinterFilesMixin, ConnectedPrinterListenerMixin
 ):
     connector = "bambu"
-    name = "Bambu (MQTT)"
+    name = "Bambu (local)"
 
     storage_capabilities = StorageCapabilities(
         write_file=True,
@@ -449,7 +452,14 @@ class ConnectedBambuPrinter(
         if self._client is None:
             return
 
-        self._client.send_gcode_commands(*commands)
+        msg = {
+            "print": {
+                "sequence_id": "0",
+                "command": "gcode_line",
+                "param": "\n".join(commands),
+            }
+        }
+        self._client.publish(msg)
 
     def is_ready(self, *args, **kwargs):
         if not self._client:
@@ -463,16 +473,18 @@ class ConnectedBambuPrinter(
     # ~~ Job handling
 
     def supports_job(self, job: PrintJob) -> bool:
-        if not valid_file_type(job.path, type="machinecode"):
-            return False
+        # if not valid_file_type(job.path, type="machinecode"):
+        #    return False
+        #
+        # if (
+        #    job.storage != FileDestinations.PRINTER
+        #    and not self._file_manager.capabilities(job.storage).read_file
+        # ):
+        #    return False
+        #
+        # return True
 
-        if (
-            job.storage != FileDestinations.PRINTER
-            and not self._file_manager.capabilities(job.storage).read_file
-        ):
-            return False
-
-        return True
+        return job.storage == FileDestinations.PRINTER
 
     def start_print(self, pos=None, user=None, tags=None, *args, **kwargs):
         if pos is None:
@@ -489,8 +501,10 @@ class ConnectedBambuPrinter(
 
         try:
             if self.current_job.storage == FileDestinations.PRINTER:
-                self._client.start_print(self.current_job.path).result()
+                if not self._start_current_job_on_printer():
+                    raise RuntimeError("Print start unsuccessful")
 
+            """
             else:
                 # we first need to upload this as a cache file, then start the print on that
 
@@ -524,6 +538,7 @@ class ConnectedBambuPrinter(
                     handle_uploaded
                 )
                 print_future.result()
+            """
 
         except Exception:
             self._logger.exception(
@@ -534,15 +549,62 @@ class ConnectedBambuPrinter(
 
     def pause_print(self, tags=None, *args, **kwargs):
         self.state = ConnectedPrinterState.PAUSING
-        self._client.pause_print().result()
+        self._client.publish(PAUSE)
 
     def resume_print(self, tags=None, *args, **kwargs):
         self.state = ConnectedPrinterState.RESUMING
-        self._client.resume_print().result()
+        self._client.publish(RESUME)
 
     def cancel_print(self, tags=None, *args, **kwargs):
         self.state = ConnectedPrinterState.CANCELLING
-        self._client.cancel_print().result()
+        self._client.publish(STOP)
+
+    def _start_current_job_on_printer(self):
+        from urllib.parse import quote_plus
+
+        fs_root = "/"
+        if self._client.get_device().info.device_type in MODELS_SDCARD_MOUNT:
+            fs_root = "/mnt/sdcard/"
+
+        job = self.current_job
+        if job.path.endswith(".gcode"):
+            print_command = {
+                "print": {
+                    "sequence_id": "0",
+                    "command": "gcode_file",
+                    "param": f"{fs_root}{job.path}",
+                }
+            }
+
+        else:
+            url = f"file://{fs_root}" + "/".join(map(quote_plus, job.path.split("/")))
+
+            print_command = {
+                "print": {
+                    "sequence_id": "2342",
+                    "command": "project_file",
+                    "param": "Metadata/plate_X.gcode",
+                    "profile_id": "0",  # always 0 for local prints
+                    "project_id": "0",  # always 0 for local prints
+                    "task_id": "0",  # always 0 for local prints
+                    "subtask_id": "0",  # always 0 for local prints
+                    "subtask_name": "",
+                    "file": "",  # filename to print, not needed when "url" is specified
+                    "url": url,  # URL to print, root path,
+                    "md5": "",
+                    # TODO: needs to be taken from some settings *somewhere*
+                    "timelapse": False,
+                    "bed_type": "auto",
+                    "bed_leveling": True,
+                    "flow_cali": True,
+                    "vibration_cali": True,
+                    "layer_inspect": False,
+                    "ams_mapping": "",
+                    "use_ams": False,
+                }
+            }
+
+        return self._client.publish(print_command)
 
     # ~~ PrinterFilesMixin
 
