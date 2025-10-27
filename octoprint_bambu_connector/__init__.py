@@ -73,6 +73,10 @@ class BambuConnectorPlugin(
         }
 
 
+def support_gcode_3mf_machinecode(*args, **kwargs):
+    return {"machinecode": {"3mf": ("gcode.3mf",)}}
+
+
 __plugin_name__ = "Bambu Connector"
 __plugin_author__ = "jneilliii"
 __plugin_description__ = (
@@ -82,5 +86,6 @@ __plugin_license__ = "AGPLv3"
 __plugin_pythoncompat__ = ">=3.9,<4"
 __plugin_implementation__ = BambuConnectorPlugin()
 __plugin_hooks__ = {
-    "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information
+    "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
+    "octoprint.filemanager.extension_tree": support_gcode_3mf_machinecode,
 }

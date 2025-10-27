@@ -1,3 +1,4 @@
+import ftplib
 import logging
 import os
 import threading
@@ -40,6 +41,9 @@ GCODE_STATE_LOOKUP = {
     "RUNNING": ConnectedPrinterState.PRINTING,
     "UNKNOWN": ConnectedPrinterState.CLOSED,
 }
+
+RELEVANT_EXTENSIONS = (".gcode", ".gco", ".gcode.3mf")
+IGNORED_FOLDERS = ("/logger", "/recorder", "/timelapse", "/image", "/ipcam")
 
 
 class ConnectedBambuPrinter(
@@ -163,7 +167,9 @@ class ConnectedBambuPrinter(
             self.set_state(ConnectedPrinterState.OPERATIONAL)
         if print_job_state == ConnectedPrinterState.PRINTING:
             self.set_state(ConnectedPrinterState.PRINTING)
-            self._progress = {"progress": device_data.print_job.print_percentage}
+            if not self._progress:
+                self._progress = JobProgress()
+            self._progress.progress = device_data.print_job.print_percentage
             self._listener.on_printer_job_progress()
 
         temperature_data = {
@@ -422,68 +428,82 @@ class ConnectedBambuPrinter(
     def printer_files_mounted(self) -> bool:
         return self._client is not None and self._client.ftp_enabled
 
-    def _fetch_printer_files_from_ftp(self):
-        files = []
+    def _recursive_ftp_list(self, ftp: ftplib.FTP, path="/") -> list[FileInfo]:
+        result = []
 
-        if self._client is not None and self._client.connected:
-            ftp_search_paths = ["/", "/cache/"]
+        try:
+            file_list = ftp.nlst(path)
+        except ftplib.error_perm:
+            return result
+        except Exception as e:
+            self._logger.warning(f"Error retrieving file list for {path}: {e}")
+            return result
+
+        for file_name in file_list:
+            file_path = os.path.join(path, file_name)
+
+            if file_path in IGNORED_FOLDERS:
+                continue
+
+            if "." not in file_name:
+                # possible directory, try listing it
+                self._logger.debug(
+                    f"{file_path} looks like a folder, trying to fetch its list"
+                )
+                result += self._recursive_ftp_list(ftp, file_path)
+                continue
+
+            if not any(file_name.endswith(ext) for ext in RELEVANT_EXTENSIONS):
+                continue
+
+            # fetch size
             try:
-                ftp = self._client.ftp_connection()
-
-                for path in ftp_search_paths:
-                    try:
-                        for file_name in ftp.nlst(path):
-                            _, ext = os.path.splitext(file_name)
-                            if ext in [".3mf", ".gcode"]:
-                                file_path = os.path.join(path, file_name)
-
-                                # fetch size
-                                try:
-                                    size = ftp.size(file_path)
-                                except Exception as e:
-                                    self._logger.exception(
-                                        f"Error retrieving size of {file_path}: {e}"
-                                    )
-                                    continue
-
-                                # fetch date
-                                try:
-                                    date_response = ftp.sendcmd(
-                                        f"MDTM {file_path}"
-                                    ).replace("213 ", "")
-                                    timestamp = datetime.strptime(
-                                        date_response, "%Y%m%d%H%M%S"
-                                    ).replace(tzinfo=timezone.utc)
-                                except Exception as e:
-                                    self._logger.exception(
-                                        f"Error retrieving modification date of {file_path}: {e}"
-                                    )
-                                    continue
-
-                                file = FileInfo(
-                                    path=file_path.lstrip("/"),
-                                    size=size,
-                                    modified=timestamp.timestamp(),
-                                    permissions="",
-                                )
-                                files.append(file)
-                    except Exception as e:
-                        self._logger.exception(
-                            f"Error fetching file list for path {path}: {e}"
-                        )
-
+                size = ftp.size(file_path)
             except Exception as e:
-                self._logger.exception(f"Error connecting to FTP: {e}")
+                self._logger.exception(f"Error retrieving size of {file_path}: {e}")
+                continue
 
-            finally:
-                if ftp:
-                    ftp.close()
+            # fetch date
+            try:
+                date_response = ftp.sendcmd(f"MDTM {file_path}").replace("213 ", "")
+                timestamp = datetime.strptime(date_response, "%Y%m%d%H%M%S").replace(
+                    tzinfo=timezone.utc
+                )
+            except Exception as e:
+                self._logger.exception(
+                    f"Error retrieving modification date of {file_path}: {e}"
+                )
+                continue
 
-        self._files = files
+            result.append(
+                FileInfo(
+                    path=file_path.lstrip("/"),
+                    size=size,
+                    modified=timestamp.timestamp(),
+                    permissions="",
+                )
+            )
+
+        return result
+
+    def _fetch_printer_files_from_ftp(self):
+        try:
+            ftp = self._client.ftp_connection()
+            self._files = self._recursive_ftp_list(ftp)
+
+        except Exception as e:
+            self._logger.exception(f"Error connecting to FTP: {e}")
+
+        finally:
+            if ftp:
+                ftp.close()
 
     def refresh_printer_files(
         self, blocking=False, timeout=10, *args, **kwargs
     ) -> None:
+        if not self._client or not self._client.connected:
+            return
+
         thread = threading.Thread(target=self._fetch_printer_files_from_ftp)
         thread.daemon = True
         thread.start()
