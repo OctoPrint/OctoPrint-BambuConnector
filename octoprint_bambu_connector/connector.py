@@ -1,10 +1,12 @@
+import enum
 import ftplib
 import logging
 import os
 import threading
+from collections import namedtuple
 from concurrent.futures import Future
 from datetime import datetime, timezone
-from typing import cast
+from typing import Literal, Optional, cast
 
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations, valid_file_type
@@ -17,16 +19,8 @@ from octoprint.printer.connection import (
     FirmwareInformation,
 )
 from octoprint.printer.job import PrintJob
+from octoprint.schema import BaseModel
 
-from .client import (
-    Coordinate,
-    FileInfo,
-    IdleState,
-    PrinterState,
-    PrintStats,
-    SDCardStats,
-    TemperatureDataPoint,
-)
 from .vendor.pybambu.bambu_client import BambuClient
 from .worker import AsyncTaskWorker
 
@@ -44,6 +38,135 @@ GCODE_STATE_LOOKUP = {
 
 RELEVANT_EXTENSIONS = (".gcode", ".gco", ".gcode.3mf")
 IGNORED_FOLDERS = ("/logger", "/recorder", "/timelapse", "/image", "/ipcam")
+
+
+class FileInfo(BaseModel):
+    path: str
+    modified: float
+    size: int
+    permissions: str
+
+
+class PrintStatsSupplemental(BaseModel):
+    total_layer: Optional[int] = None
+    current_layer: Optional[int] = None
+
+
+class PrintStats(BaseModel):
+    filename: Optional[str] = None
+
+    total_duration: Optional[float] = None
+    """Elapsed time since start"""
+
+    print_duration: Optional[float] = None
+    """Total duration minus time until first extrusion and pauses, see https://github.com/Klipper3d/klipper/blob/9346ad1914dc50d12f1e5efe630448bf763d1469/klippy/extras/print_stats.py#L112"""
+
+    filament_used: Optional[float] = None
+
+    state: Optional[
+        Literal["standby", "printing", "paused", "complete", "error", "cancelled"]
+    ] = None
+
+    message: Optional[str] = None
+
+    info: Optional[PrintStatsSupplemental] = None
+
+
+class SDCardStats(BaseModel):
+    file_path: Optional[str] = (
+        None  # unset if no file is loaded, path is the path on the file system
+    )
+    progress: Optional[float] = None  # 0.0 to 1.0
+    is_active: Optional[bool] = None  # True if a print is ongoing
+    file_position: Optional[int] = None
+    file_size: Optional[int] = None
+
+
+class IdleTimeout(BaseModel):
+    state: Optional[Literal["Printing", "Ready", "Idle"]] = (
+        None  # "Printing" means some commands are being executed!
+    )
+    printing_time: Optional[float] = (
+        None  # Duration of "Printing" state, resets on state change to "Ready"
+    )
+
+
+Coordinate = namedtuple("Coordinate", "x, y, z, e")
+
+
+class PositionData(BaseModel):
+    speed_factor: Optional[float] = None
+    speed: Optional[float] = None
+    extruder_factor: Optional[float] = None
+    absolute_coordinates: Optional[bool] = None
+    absolute_extrude: Optional[bool] = None
+    homing_origins: Optional[Coordinate] = None  # offsets
+    position: Optional[Coordinate] = None  # current w/ offsets
+    gcode_position: Optional[Coordinate] = None  # current w/o offsets
+
+
+class TemperatureDataPoint:
+    actual: float = 0.0
+    target: float = 0.0
+
+    def __init__(self, actual: float = 0.0, target: float = 0.0):
+        self.actual = actual
+        self.target = target
+
+    def __str__(self):
+        return f"{self.actual} / {self.target}"
+
+    def __repr__(self):
+        return f"TemperatureDataPoint({self.actual}, {self.target})"
+
+
+class BambuState(enum.Enum):
+    READY = "ready"
+    ERROR = "error"
+    SHUTDOWN = "shutdown"
+    STARTUP = "startup"
+    DISCONNECTED = "disconnected"
+    UNKNOWN = "unknown"
+
+    @classmethod
+    def for_value(cls, value: str) -> "BambuState":
+        for state in cls:
+            if state.value == value:
+                return state
+        return BambuState.UNKNOWN
+
+
+class PrinterState(enum.Enum):
+    STANDBY = "standby"
+    PRINTING = "printing"
+    PAUSED = "paused"
+    COMPLETE = "complete"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+    UNKNOWN = "unknown"
+    RUNNING = "running"
+    OPERATIONAL = "FINISH"
+
+    @classmethod
+    def for_value(cls, value: str) -> "PrinterState":
+        for state in cls:
+            if state.value == value:
+                return state
+        return cls.UNKNOWN
+
+
+class IdleState(enum.Enum):
+    PRINTING = "Printing"
+    READY = "Ready"
+    IDLE = "Idle"
+    UNKNOWN = "unknown"
+
+    @classmethod
+    def for_value(cls, value: str) -> "IdleState":
+        for state in cls:
+            if state.value == value:
+                return state
+        return cls.UNKNOWN
 
 
 class ConnectedBambuPrinter(
@@ -93,7 +216,6 @@ class ConnectedBambuPrinter(
         self._access_code = kwargs.get("access_code")
 
         self._client = None
-        # self._listener = ConnectedBambuPrinterListenerMixin()
 
         self._state = ConnectedPrinterState.CLOSED
         self._error = None
