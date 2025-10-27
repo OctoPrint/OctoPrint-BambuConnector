@@ -4,6 +4,7 @@ import asyncio
 import ftplib
 import functools
 import json
+import logging
 import math
 import os
 import queue
@@ -52,7 +53,7 @@ class WatchdogThread(threading.Thread):
         self._last_received_data = time.time()
 
     def run(self):
-        self.setName(f"{self._client._device.info.device_type}-Watchdog-{threading.get_native_id()}")
+        self.name = f"{self._client._device.info.device_type}-Watchdog-{threading.get_native_id()}"
         LOGGER.debug("Watchdog thread started.")
 
         WATCHDOG_TIMER = 60
@@ -329,7 +330,7 @@ class ImplicitFTP_TLS(ftplib.FTP_TLS):
                                             server_hostname=self.host,
                                             session=session)
         return conn, size
-    
+
     def storbinary_no_unwrap(self, cmd, fp, blocksize=8192, callback=None, rest=None):
         """Version of storbinary that skips conn.unwrap() to avoid SSL timeout."""
         self.voidcmd('TYPE I')
@@ -343,7 +344,7 @@ class ImplicitFTP_TLS(ftplib.FTP_TLS):
                     callback(buf)
             # SKIP conn.unwrap() which causes timeout
             conn.close()
-        return self.voidresp()    
+        return self.voidresp()
 
 @dataclass
 class BambuClient:
@@ -402,8 +403,8 @@ class BambuClient:
             language = language[:2]
         self._user_language = language
 
-        self._device.print_job.prune_print_history_files()
-        self._device.print_job.prune_timelapse_files()
+        #self._device.print_job.prune_print_history_files()
+        #self._device.print_job.prune_timelapse_files()
 
     @property
     def settings(self):
@@ -462,6 +463,7 @@ class BambuClient:
         self.client.on_message = self.on_message
         # Set aggressive reconnect polling.
         self.client.reconnect_delay_set(min_delay=1, max_delay=1)
+        self.client.logger = logging.getLogger("paho.mqtt.client")
 
         # Run the blocking tls_set method in a separate thread
         loop = asyncio.get_event_loop()
@@ -656,26 +658,26 @@ class BambuClient:
     def disconnect(self):
         """Disconnect the Bambu Client from server"""
         LOGGER.debug("Disconnect: Client Disconnecting")
-        
+
         # Stop and wait for background threads
         if self._mqtt is not None:
             LOGGER.debug("Stopping MQTT thread")
             self._mqtt.stop()
             self._mqtt.join(timeout=5)
             self._mqtt = None
-            
+
         if self._watchdog is not None:
             LOGGER.debug("Stopping watchdog thread")
             self._watchdog.stop()
             self._watchdog.join(timeout=5)
             self._watchdog = None
-            
+
         if self._camera is not None:
             LOGGER.debug("Stopping camera thread")
             self._camera.stop()
             self._camera.join(timeout=5)
             self._camera = None
-        
+
         # Disconnect MQTT client
         if self.client is not None:
             try:
