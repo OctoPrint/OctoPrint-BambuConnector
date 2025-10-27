@@ -127,6 +127,7 @@ class ConnectedBambuPrinter(
             old_state == ConnectedPrinterState.CONNECTING
             and state == ConnectedPrinterState.OPERATIONAL
         ):
+            self._listener.on_printer_files_available(True)
             self._listener.on_printer_files_refreshed(
                 self.get_printer_files(refresh=True)
             )
