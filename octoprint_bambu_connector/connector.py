@@ -24,13 +24,6 @@ from octoprint.schema import BaseModel
 from .vendor.pybambu.bambu_client import BambuClient
 from .worker import AsyncTaskWorker
 
-MODELS = {
-    "a1": "A1",
-    "a1m": "A1 mini",
-    "x1": "X1",
-    "x1c": "X1C",
-}  # TODO: add all supported models here
-
 GCODE_STATE_LOOKUP = {
     "FAILED": ConnectedPrinterState.ERROR,
     "FINISH": ConnectedPrinterState.OPERATIONAL,
@@ -180,7 +173,7 @@ class ConnectedBambuPrinter(
     ConnectedPrinter, PrinterFilesMixin, ConnectedPrinterListenerMixin
 ):
     connector = "bambu"
-    name = "Bambu (local)"
+    name = "Bambu (MQTT)"
 
     storage_capabilities = StorageCapabilities(
         write_file=True,
@@ -198,7 +191,7 @@ class ConnectedBambuPrinter(
 
     @classmethod
     def connection_options(cls) -> dict:
-        return {"model": [{"key": k, "name": v} for k, v in MODELS.items()]}
+        return {}
 
     TEMPERATURE_LOOKUP = {
         "extruder": "tool0",
@@ -221,7 +214,6 @@ class ConnectedBambuPrinter(
         self._host = kwargs.get("host")
         self._serial = kwargs.get("serial")
         self._access_code = kwargs.get("access_code")
-        self._model = kwargs.get("model")
 
         self._client = None
 
@@ -248,7 +240,6 @@ class ConnectedBambuPrinter(
                 "host": self._host,
                 "serial": self._serial,
                 "access_code": self._access_code,
-                "model": self._model,
             }
         )
         return parameters
