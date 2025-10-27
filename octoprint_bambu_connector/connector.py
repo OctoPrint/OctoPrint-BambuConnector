@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from concurrent.futures import Future
 from datetime import datetime, timezone
 from typing import cast
@@ -218,7 +219,7 @@ class ConnectedBambuPrinter(
                 self._logger.debug("loop not running")
                 return False
         except Exception as e:
-            self._logger.error(e)
+            self._logger.exception(e)
             self.set_state(ConnectedPrinterState.CLOSED_WITH_ERROR, f"{e}")
             return False
         return True
@@ -419,38 +420,76 @@ class ConnectedBambuPrinter(
 
     @property
     def printer_files_mounted(self) -> bool:
-        # return self._client is not None and self._client.ftp_enabled
-        return True
+        return self._client is not None and self._client.ftp_enabled
+
+    def _fetch_printer_files_from_ftp(self):
+        files = []
+
+        if self._client is not None and self._client.connected:
+            ftp_search_paths = ["/", "/cache/"]
+            try:
+                ftp = self._client.ftp_connection()
+
+                for path in ftp_search_paths:
+                    try:
+                        for file_name in ftp.nlst(path):
+                            _, ext = os.path.splitext(file_name)
+                            if ext in [".3mf", ".gcode"]:
+                                file_path = os.path.join(path, file_name)
+
+                                # fetch size
+                                try:
+                                    size = ftp.size(file_path)
+                                except Exception as e:
+                                    self._logger.exception(
+                                        f"Error retrieving size of {file_path}: {e}"
+                                    )
+                                    continue
+
+                                # fetch date
+                                try:
+                                    date_response = ftp.sendcmd(
+                                        f"MDTM {file_path}"
+                                    ).replace("213 ", "")
+                                    timestamp = datetime.strptime(
+                                        date_response, "%Y%m%d%H%M%S"
+                                    ).replace(tzinfo=timezone.utc)
+                                except Exception as e:
+                                    self._logger.exception(
+                                        f"Error retrieving modification date of {file_path}: {e}"
+                                    )
+                                    continue
+
+                                file = FileInfo(
+                                    path=file_path.lstrip("/"),
+                                    size=size,
+                                    modified=timestamp.timestamp(),
+                                    permissions="",
+                                )
+                                files.append(file)
+                    except Exception as e:
+                        self._logger.exception(
+                            f"Error fetching file list for path {path}: {e}"
+                        )
+
+            except Exception as e:
+                self._logger.exception(f"Error connecting to FTP: {e}")
+
+            finally:
+                if ftp:
+                    ftp.close()
+
+        self._files = files
 
     def refresh_printer_files(
         self, blocking=False, timeout=10, *args, **kwargs
     ) -> None:
-        if self._client is not None and self._client.connected:
-            self._files.clear()
-            ftp_search_paths = ["/cache/", "/"]
-            try:
-                ftp = self._client.ftp_connection()
-                for path in ftp_search_paths:
-                    for file_name in ftp.nlst(path):
-                        _, ext = os.path.splitext(file_name)
-                        if ext in [".3mf"]:
-                            size = ftp.size(file_name)
-                            date_response = ftp.sendcmd(f"MDTM {file_name}").replace(
-                                "213 ", ""
-                            )
-                            timestamp = datetime.strptime(
-                                date_response, "%Y%m%d%H%M%S"
-                            ).replace(tzinfo=timezone.utc)
-                            file = FileInfo(
-                                path=file_name,
-                                size=size,
-                                modified=timestamp.timestamp(),
-                                permissions="",
-                            )
-                            self._files.append(file)
-            except Exception as e:
-                self._logger.error(f"FTP list Exception. Type: {type(e)} Args: {e}")
-                pass
+        thread = threading.Thread(target=self._fetch_printer_files_from_ftp)
+        thread.daemon = True
+        thread.start()
+
+        if blocking:
+            thread.join()
 
     def get_printer_files(self, refresh=False, recursive=False, *args, **kwargs):
         if not self.printer_files_mounted:
