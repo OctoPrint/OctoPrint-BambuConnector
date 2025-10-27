@@ -10,3 +10,7 @@
 <input type="text"
        class="connection_parameter"
        data-connection-parameter="access_code">
+<label>{{ _("Model") }}</label>
+<select class="connection_parameter"
+        data-connection-parameter="model"
+        data-bind="options: modelOptions, optionsText: 'name', optionsValue: 'key', value: currentModel"></select>
