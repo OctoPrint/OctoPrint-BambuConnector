@@ -8,10 +8,9 @@ from concurrent.futures import Future
 from typing import IO, Any, Literal, Optional, Union
 
 import requests
-
 from octoprint.schema import BaseModel
 
-from .pybambu import BambuClient
+from .vendor.pybambu import BambuClient
 
 
 class FileInfo(BaseModel):
@@ -153,7 +152,9 @@ class BambuClientListener:
     def on_bambu_disconnected(self, error: str = None) -> None:
         pass
 
-    def on_bambu_printer_state_changed(self, state: PrinterState, error_str: str = None) -> None:
+    def on_bambu_printer_state_changed(
+        self, state: PrinterState, error_str: str = None
+    ) -> None:
         pass
 
     def on_bambu_print_progress(
@@ -232,7 +233,9 @@ class BambuClientConnector(BambuClient):
         "print_stats",
         "virtual_sdcard",
         lambda obj_list: [
-            x for x in obj_list if x.startswith(BambuClientConnector.GENERIC_HEATER_PREFIX)
+            x
+            for x in obj_list
+            if x.startswith(BambuClientConnector.GENERIC_HEATER_PREFIX)
         ],
     )
 
@@ -245,7 +248,9 @@ class BambuClientConnector(BambuClient):
         *args,
         **kwargs,
     ):
-        super().__init__(self.WEBSOCKET_URL.format(host=host, port=serial), *args, **kwargs)
+        super().__init__(
+            self.WEBSOCKET_URL.format(host=host, port=serial), *args, **kwargs
+        )
 
         self._logger = logging.getLogger("octoprint.plugins.bambu_connector.client")
 
@@ -296,7 +301,9 @@ class BambuClientConnector(BambuClient):
     def on_open(self, *args, **kwargs):
         try:
             super().on_open(*args, **kwargs)
-            self.identify_connection(cb=self.attempt_handshake, cb_kwargs={"reset": True})
+            self.identify_connection(
+                cb=self.attempt_handshake, cb_kwargs={"reset": True}
+            )
         except Exception:
             self._logger.exception("Error in on_open handler")
 
@@ -362,9 +369,9 @@ class BambuClientConnector(BambuClient):
         }
         if self._access_code:
             payload["access_code"] = self._access_code
-        self.call_method("server.connection.identify", params=payload).add_done_callback(
-            on_connection_identified
-        )
+        self.call_method(
+            "server.connection.identify", params=payload
+        ).add_done_callback(on_connection_identified)
 
     def attempt_handshake(self, reset=False) -> None:
         if reset:
@@ -380,9 +387,7 @@ class BambuClientConnector(BambuClient):
 
         self._handshake_attempt += 1
         if self._handshake_attempt > MAX_HANDSHAKE_ATTEMPTS:
-            self._listener.on_bambu_disconnected(
-                "Reached maximum connection attempts"
-            )
+            self._listener.on_bambu_disconnected("Reached maximum connection attempts")
             return
 
         def on_server_info(future: Future) -> None:
@@ -576,9 +581,9 @@ class BambuClientConnector(BambuClient):
             except Exception:
                 self._logger.exception("Error while fetching console history")
 
-        self.call_method("server.gcode_store", params={"count": count}).add_done_callback(
-            on_result
-        )
+        self.call_method(
+            "server.gcode_store", params={"count": count}
+        ).add_done_callback(on_result)
 
     # commands
 
@@ -667,7 +672,10 @@ class BambuClientConnector(BambuClient):
             filename = parts[-1]
 
         def upload(
-            folder: str, filename: str, handle: Union[str, IO], close_on_eof: bool = True
+            folder: str,
+            filename: str,
+            handle: Union[str, IO],
+            close_on_eof: bool = True,
         ):
             try:
                 if isinstance(handle, str):
@@ -752,7 +760,10 @@ class BambuClientConnector(BambuClient):
     ) -> Future:
         return self.call_method(
             "server.files.move",
-            params={"source": f"{src_root}/{src_path}", "dest": f"{dst_root}/{dst_path}"},
+            params={
+                "source": f"{src_root}/{src_path}",
+                "dest": f"{dst_root}/{dst_path}",
+            },
         )
 
     def copy_path(
@@ -764,7 +775,10 @@ class BambuClientConnector(BambuClient):
     ) -> Future:
         return self.call_method(
             "server.files.copy",
-            params={"source": f"{src_root}/{src_path}", "dest": f"{dst_root}/{dst_path}"},
+            params={
+                "source": f"{src_root}/{src_path}",
+                "dest": f"{dst_root}/{dst_path}",
+            },
         )
 
     ##~~ Callbacks for notifications
@@ -796,9 +810,7 @@ class BambuClientConnector(BambuClient):
             self.refresh_files(root=root)
 
     def on_gcode_response(self, _, params):
-        self._listener.on_bambu_gcode_log(
-            *self._to_multiline_loglines("<<<", *params)
-        )
+        self._listener.on_bambu_gcode_log(*self._to_multiline_loglines("<<<", *params))
 
         for line in params:
             if line.startswith(ACTION_PREFIX):
@@ -921,7 +933,8 @@ if __name__ == "__main__":
     HOST = "q1pro.lan"
 
     logging.basicConfig(
-        level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        level=logging.DEBUG,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
     class Listener(BambuClientListener):

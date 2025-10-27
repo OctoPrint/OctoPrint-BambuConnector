@@ -1,5 +1,7 @@
 import logging
+import os
 from concurrent.futures import Future
+from datetime import datetime, timezone
 from typing import cast
 
 from octoprint.events import Events, eventManager
@@ -8,29 +10,23 @@ from octoprint.filemanager.storage import StorageCapabilities
 from octoprint.printer import JobProgress, PrinterFile, PrinterFilesMixin
 from octoprint.printer.connection import (
     ConnectedPrinter,
+    ConnectedPrinterListenerMixin,
     ConnectedPrinterState,
     FirmwareInformation,
-    ConnectedPrinterListenerMixin,
 )
 from octoprint.printer.job import PrintJob
-
-from .pybambu.bambu_client import BambuClient
-from .worker import AsyncTaskWorker
-import os
-from datetime import datetime, timezone
 
 from .client import (
     Coordinate,
     FileInfo,
     IdleState,
-    BambuState,
-    BambuClientConnector,
-    # BambuClientListener,
     PrinterState,
     PrintStats,
     SDCardStats,
     TemperatureDataPoint,
 )
+from .vendor.pybambu.bambu_client import BambuClient
+from .worker import AsyncTaskWorker
 
 GCODE_STATE_LOOKUP = {
     "FAILED": ConnectedPrinterState.ERROR,
@@ -41,7 +37,7 @@ GCODE_STATE_LOOKUP = {
     "PAUSE": ConnectedPrinterState.PAUSED,
     "PREPARE": ConnectedPrinterState.TRANSFERRING_FILE,
     "RUNNING": ConnectedPrinterState.PRINTING,
-    "UNKNOWN": ConnectedPrinterState.CLOSED
+    "UNKNOWN": ConnectedPrinterState.CLOSED,
 }
 
 
@@ -69,7 +65,11 @@ class ConnectedBambuPrinter(
     def connection_options(cls) -> dict:
         return {}
 
-    TEMPERATURE_LOOKUP = {"extruder": "tool0", "heater_bed": "bed", "chamber": "chamber"}
+    TEMPERATURE_LOOKUP = {
+        "extruder": "tool0",
+        "heater_bed": "bed",
+        "chamber": "chamber",
+    }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -109,7 +109,11 @@ class ConnectedBambuPrinter(
     def connection_parameters(self):
         parameters = super().connection_parameters
         parameters.update(
-            {"host": self._host, "serial": self._serial, "access_code": self._access_code}
+            {
+                "host": self._host,
+                "serial": self._serial,
+                "access_code": self._access_code,
+            }
         )
         return parameters
 
@@ -119,8 +123,13 @@ class ConnectedBambuPrinter(
 
         old_state = self.state
 
-        if old_state == ConnectedPrinterState.CONNECTING and state == ConnectedPrinterState.OPERATIONAL:
-            self._listener.on_printer_files_refreshed(self.get_printer_files(refresh=True))
+        if (
+            old_state == ConnectedPrinterState.CONNECTING
+            and state == ConnectedPrinterState.OPERATIONAL
+        ):
+            self._listener.on_printer_files_refreshed(
+                self.get_printer_files(refresh=True)
+            )
             self._logger.info(f"Files: {self._files}")
 
         super().set_state(state, error=error)
@@ -155,16 +164,26 @@ class ConnectedBambuPrinter(
             self._progress = {"progress": device_data.print_job.print_percentage}
             self._listener.on_printer_job_progress()
 
-        temperature_data = {"tool0": (temperatures.active_nozzle_temperature, temperatures.active_nozzle_target_temperature),
-                            "bed": (temperatures.bed_temp, temperatures.target_bed_temp),
-                            "chamber": (temperatures.chamber_temp, 0.0)}
+        temperature_data = {
+            "tool0": (
+                temperatures.active_nozzle_temperature,
+                temperatures.active_nozzle_target_temperature,
+            ),
+            "bed": (temperatures.bed_temp, temperatures.target_bed_temp),
+            "chamber": (temperatures.chamber_temp, 0.0),
+        }
 
         self._listener.on_printer_temperature_update(temperature_data)
 
     def connect(self, *args, **kwargs):
         from . import BambuRolloverLogHandler
 
-        if self._client is not None or self._host == "" or self._serial == "" or self._access_code == "":
+        if (
+            self._client is not None
+            or self._host == ""
+            or self._serial == ""
+            or self._access_code == ""
+        ):
             return
 
         BambuRolloverLogHandler.arm_rollover()
@@ -172,21 +191,26 @@ class ConnectedBambuPrinter(
         eventManager().fire(Events.CONNECTING)
         self.set_state(ConnectedPrinterState.CONNECTING)
         self._client = BambuClient(
-            {'host': self._host,
-             'serial': self._serial,
-             'access_code': self._access_code,
-             'enable_camera': False,
-             'local_mqtt': True,
-             }
+            {
+                "host": self._host,
+                "serial": self._serial,
+                "access_code": self._access_code,
+                "enable_camera": False,
+                "local_mqtt": True,
+            }
         )
 
         self._logger.info("Connecting to Bambu")
         try:
             if self.worker.loop.is_running():
-                future = self.worker.run_coroutine_threadsafe(self._client.try_connection())
+                future = self.worker.run_coroutine_threadsafe(
+                    self._client.try_connection()
+                )
                 success = future.result()
                 if success:
-                    self.worker.run_coroutine_threadsafe(self._client.connect(self.on_bambu_client_update))
+                    self.worker.run_coroutine_threadsafe(
+                        self._client.connect(self.on_bambu_client_update)
+                    )
                 else:
                     self.set_state(ConnectedPrinterState.CLOSED)
             else:
@@ -326,7 +350,11 @@ class ConnectedBambuPrinter(
 
         self.state = ConnectedPrinterState.STARTING
         self._progress = JobProgress(
-            job=self.current_job, progress=0.0, pos=pos, elapsed=0.0, cleaned_elapsed=0.0
+            job=self.current_job,
+            progress=0.0,
+            pos=pos,
+            elapsed=0.0,
+            cleaned_elapsed=0.0,
         )
 
         try:
@@ -393,10 +421,12 @@ class ConnectedBambuPrinter(
         # return self._client is not None and self._client.ftp_enabled
         return True
 
-    def refresh_printer_files(self, blocking=False, timeout=10, *args, **kwargs) -> None:
+    def refresh_printer_files(
+        self, blocking=False, timeout=10, *args, **kwargs
+    ) -> None:
         if self._client is not None and self._client.connected:
             self._files.clear()
-            ftp_search_paths = ['/cache/', '/']
+            ftp_search_paths = ["/cache/", "/"]
             try:
                 ftp = self._client.ftp_connection()
                 for path in ftp_search_paths:
@@ -404,9 +434,18 @@ class ConnectedBambuPrinter(
                         _, ext = os.path.splitext(file_name)
                         if ext in [".3mf"]:
                             size = ftp.size(file_name)
-                            date_response = ftp.sendcmd(f"MDTM {file_name}").replace("213 ", "")
-                            timestamp = datetime.strptime(date_response, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-                            file = FileInfo(path=file_name, size=size, modified=timestamp.timestamp(), permissions="")
+                            date_response = ftp.sendcmd(f"MDTM {file_name}").replace(
+                                "213 ", ""
+                            )
+                            timestamp = datetime.strptime(
+                                date_response, "%Y%m%d%H%M%S"
+                            ).replace(tzinfo=timezone.utc)
+                            file = FileInfo(
+                                path=file_name,
+                                size=size,
+                                modified=timestamp.timestamp(),
+                                permissions="",
+                            )
                             self._files.append(file)
             except Exception as e:
                 self._logger.error(f"FTP list Exception. Type: {type(e)} Args: {e}")
@@ -502,10 +541,7 @@ class ConnectedBambuPrinter(
         self, data: dict[str, TemperatureDataPoint]
     ) -> None:
         self._listener.on_printer_temperature_update(
-            {
-                key: (value.actual, value.target)
-                for key, value in data.items()
-            }
+            {key: (value.actual, value.target) for key, value in data.items()}
         )
 
     def on_bambu_gcode_log(self, *lines: str) -> None:
@@ -681,7 +717,9 @@ class ConnectedBambuPrinter(
     def on_bambu_position_update(self, position: Coordinate):
         prev = self._position
         if prev and prev.z != position.z:
-            self._event_manager.fire(Events.Z_CHANGE, {"new": position.z, "old": prev.z})
+            self._event_manager.fire(
+                Events.Z_CHANGE, {"new": position.z, "old": prev.z}
+            )
         self._position = position
 
     ##~~ helpers
@@ -710,9 +748,13 @@ class ConnectedBambuPrinter(
                 # still printing
                 return
 
-            if self.state == ConnectedPrinterState.FINISHING and self._printer_state in (
-                PrinterState.COMPLETE,
-                PrinterState.STANDBY,
+            if (
+                self.state == ConnectedPrinterState.FINISHING
+                and self._printer_state
+                in (
+                    PrinterState.COMPLETE,
+                    PrinterState.STANDBY,
+                )
             ):
                 # print done
                 self._progress.progress = 1.0

@@ -2,7 +2,6 @@ import threading
 import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from time import sleep
 
 logger = logging.getLogger("octoprint.plugins.bambu_connector.worker")
 

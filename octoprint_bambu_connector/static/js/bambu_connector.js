@@ -4,7 +4,7 @@
  * Author: jneilliii
  * License: AGPL-3.0-or-later
  */
-$(function() {
+$(function () {
     function Bambu_connectorViewModel(parameters) {
         var self = this;
 
@@ -22,8 +22,12 @@ $(function() {
     OCTOPRINT_VIEWMODELS.push({
         construct: Bambu_connectorViewModel,
         // ViewModels your plugin depends on, e.g. loginStateViewModel, settingsViewModel, ...
-        dependencies: [ /* "loginStateViewModel", "settingsViewModel" */ ],
+        dependencies: [
+            /* "loginStateViewModel", "settingsViewModel" */
+        ],
         // Elements to bind to, e.g. #settings_plugin_bambu_connector, #tab_plugin_bambu_connector, ...
-        elements: [ /* ... */ ]
+        elements: [
+            /* ... */
+        ]
     });
 });

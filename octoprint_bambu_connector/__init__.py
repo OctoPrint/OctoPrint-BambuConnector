@@ -1,9 +1,7 @@
-# coding=utf-8
-from __future__ import absolute_import
-import octoprint.plugin
 import logging
-from flask_babel import gettext
+
 import octoprint.plugin
+from flask_babel import gettext
 from octoprint.logging.handlers import TriggeredRolloverLogHandler
 
 
@@ -17,14 +15,13 @@ class BambuConnectorPlugin(
     octoprint.plugin.SettingsPlugin,
     octoprint.plugin.StartupPlugin,
 ):
-
     def __init__(self):
         super().__init__()
         self._logging_handler = None
 
     def initialize(self):
         self._logging_handler = None
-        from .connector import ConnectedBambuPrinter
+        from .connector import ConnectedBambuPrinter  # noqa: F401
 
     def on_startup(self, host, port):
         self._configure_logging()
@@ -39,9 +36,7 @@ class BambuConnectorPlugin(
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
         handler.setLevel(logging.DEBUG)
 
-        logger = logging.getLogger(
-            "octoprint.plugins.bambu_connector.mqtt.console"
-        )
+        logger = logging.getLogger("octoprint.plugins.bambu_connector.mqtt.console")
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG)
         logger.propagate = True
@@ -80,11 +75,12 @@ class BambuConnectorPlugin(
 
 __plugin_name__ = "Bambu Connector"
 __plugin_author__ = "jneilliii"
-__plugin_description__ = "A printer connector plugin to support communication with Bambu printers."
+__plugin_description__ = (
+    "A printer connector plugin to support communication with Bambu printers."
+)
 __plugin_license__ = "AGPLv3"
 __plugin_pythoncompat__ = ">=3.9,<4"
 __plugin_implementation__ = BambuConnectorPlugin()
 __plugin_hooks__ = {
     "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information
 }
-
