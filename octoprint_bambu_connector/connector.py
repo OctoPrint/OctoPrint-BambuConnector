@@ -6,7 +6,7 @@ import threading
 from collections import namedtuple
 from concurrent.futures import Future
 from datetime import datetime, timezone
-from typing import Literal, Optional, cast
+from typing import TYPE_CHECKING, Literal, Optional, cast
 
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations
@@ -172,6 +172,12 @@ class IdleState(enum.Enum):
         return cls.UNKNOWN
 
 
+if TYPE_CHECKING:
+    from octoprint.events import EventManager
+    from octoprint.filemanager import FileManager
+    from octoprint.plugin import PluginManager, PluginSettings
+
+
 class ConnectedBambuPrinter(
     ConnectedPrinter, PrinterFilesMixin, ConnectedPrinterListenerMixin
 ):
@@ -202,17 +208,17 @@ class ConnectedBambuPrinter(
         "chamber": "chamber",
     }
 
+    # injected by our plugin
+    _event_bus: "EventManager" = None
+    _file_manager: "FileManager" = None
+    _plugin_manager: "PluginManager" = None
+    _plugin_settings: "PluginSettings" = None
+    # /injected
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        from octoprint.server import fileManager, pluginManager
-        from octoprint.settings import settings
-
         self._logger = logging.getLogger(__name__)
-        self._event_manager = eventManager()
-        self._file_manager = fileManager
-        self._plugin_manager = pluginManager
-        self._settings = settings()
 
         self._host = kwargs.get("host")
         self._serial = kwargs.get("serial")
@@ -246,6 +252,16 @@ class ConnectedBambuPrinter(
             }
         )
         return parameters
+
+    @classmethod
+    def connection_preconditions_met(cls, params):
+        from octoprint.util.net import resolve_host
+
+        host = params.get("host")
+        serial = params.get("serial")
+        access_code = params.get("access_code")
+
+        return host and resolve_host(host) and serial and access_code
 
     def set_state(self, state: ConnectedPrinterState, error: str = None):
         if state == self.state:
@@ -583,7 +599,7 @@ class ConnectedBambuPrinter(
                 "print": {
                     "sequence_id": "2342",
                     "command": "project_file",
-                    "param": "Metadata/plate_X.gcode",
+                    "param": "Metadata/plate_1.gcode",
                     "profile_id": "0",  # always 0 for local prints
                     "project_id": "0",  # always 0 for local prints
                     "task_id": "0",  # always 0 for local prints
@@ -934,7 +950,9 @@ class ConnectedBambuPrinter(
             self.refresh_printer_files()
 
         elif action == "shutdown":
-            if self._settings.getBoolean(["serial", "enableShutdownActionCommand"]):
+            if self._plugin_settings.global_get_boolean(
+                ["serial", "enableShutdownActionCommand"]
+            ):
                 from octoprint.server import system_command_manager
 
                 try:
@@ -961,9 +979,7 @@ class ConnectedBambuPrinter(
     def on_bambu_position_update(self, position: Coordinate):
         prev = self._position
         if prev and prev.z != position.z:
-            self._event_manager.fire(
-                Events.Z_CHANGE, {"new": position.z, "old": prev.z}
-            )
+            self._event_bus.fire(Events.Z_CHANGE, {"new": position.z, "old": prev.z})
         self._position = position
 
     ##~~ helpers

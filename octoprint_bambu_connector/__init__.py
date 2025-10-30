@@ -15,13 +15,16 @@ class BambuConnectorPlugin(
     octoprint.plugin.SettingsPlugin,
     octoprint.plugin.StartupPlugin,
 ):
-    def __init__(self):
-        super().__init__()
-        self._logging_handler = None
-
     def initialize(self):
+        from .connector import ConnectedBambuPrinter
+
+        # inject properties into connector class
+        ConnectedBambuPrinter._event_bus = self._event_bus
+        ConnectedBambuPrinter._file_manager = self._file_manager
+        ConnectedBambuPrinter._plugin_manager = self._plugin_manager
+        ConnectedBambuPrinter._plugin_settings = self._settings
+
         self._logging_handler = None
-        from .connector import ConnectedBambuPrinter  # noqa: F401
 
     def on_startup(self, host, port):
         self._configure_logging()
