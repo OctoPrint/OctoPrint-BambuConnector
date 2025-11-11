@@ -17,7 +17,11 @@ dynamic = [
 requires-python = ">=3.11, <4"
 
 # any additional requirements (besides OctoPrint) should be listed here
-dependencies = ["paho-mqtt", "beautifulsoup4", "python-dateutil", "pillow"]
+dependencies = [
+  "webcolors",
+  "paho-mqtt",
+  "typing-extensions ; python_version<'3.12'",
+]
 
 [tool.setuptools]
 include-package-data = true

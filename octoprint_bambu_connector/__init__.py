@@ -1,5 +1,3 @@
-import logging
-
 import octoprint.plugin
 from flask_babel import gettext
 from octoprint.logging.handlers import TriggeredRolloverLogHandler
@@ -25,25 +23,6 @@ class BambuConnectorPlugin(
         ConnectedBambuPrinter._plugin_settings = self._settings
 
         self._logging_handler = None
-
-    def on_startup(self, host, port):
-        self._configure_logging()
-
-    def _configure_logging(self):
-        handler = BambuRolloverLogHandler(
-            self._settings.get_plugin_logfile_path(postfix="mqtt"),
-            encoding="utf-8",
-            backupCount=3,
-            delay=True,
-        )
-        handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(message)s"))
-        handler.setLevel(logging.DEBUG)
-
-        for target in ("octoprint_bambu_connector.vendor.pybambu", "paho.mqtt.client"):
-            logger = logging.getLogger(target)
-            logger.addHandler(handler)
-            logger.setLevel(logging.DEBUG)
-            logger.propagate = False
 
     # ~~ Template Plugin mixin
 
