@@ -1,7 +1,7 @@
 import enum
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations
@@ -195,6 +195,7 @@ class ConnectedBambuPrinter(
         self._client = None
 
         self._state = ConnectedPrinterState.CLOSED
+        self._state_context: Optional[tuple[ConnectedPrinterState, str]] = None
         self._connection_state: bpm.bambuprinter.PrinterState = (
             bpm.bambuprinter.PrinterState.NO_STATE
         )
@@ -285,6 +286,17 @@ class ConnectedBambuPrinter(
         message = f"State changed from {old_state.name} to {self.state.name}"
         self._logger.info(message)
         self._listener.on_printer_logs(message)
+
+    def get_state_string(self, state: ConnectedPrinterState = None):
+        # TODO this requires state updates to work, but those are prevented by the state itself staying the same
+        if state is None:
+            state = self.state
+
+        context = self._state_context
+        if context and context[0] == state and context[1]:
+            return f"{state.value} ({context[1]})"
+
+        return state.value
 
     @property
     def job_progress(self) -> JobProgress:
@@ -596,7 +608,7 @@ class ConnectedBambuPrinter(
                         new_state = ConnectedPrinterState.PRINTING
                     elif (
                         self._current_stage in FINISHING_JOB_STAGES
-                        and self.state in PRINTING_STATES
+                        and self.state == ConnectedPrinterState.PRINTING
                     ):
                         new_state = ConnectedPrinterState.FINISHING
                     elif self.state not in PRINTING_STATES:
@@ -621,6 +633,7 @@ class ConnectedBambuPrinter(
             new_state = ConnectedPrinterState.CLOSED
 
         if new_state:
+            self._state_context = (new_state, printer.current_stage_text)
             self.set_state(new_state)
 
     def _update_progress_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
@@ -639,7 +652,12 @@ class ConnectedBambuPrinter(
                 cleaned_elapsed=0.0,
             )
 
-        self._progress.progress = float(printer.percent_complete) / 100.0
+        progress = printer.percent_complete
+        if self.state == ConnectedPrinterState.STARTING and progress == 100:
+            # left over from a previous print of the same file
+            progress = 0
+
+        self._progress.progress = float(progress) / 100.0
         self._progress.left_estimate = printer.time_remaining * 60.0
         if self.current_job and self.current_job.size:
             self._progress.pos = self.current_job.size * self._progress.progress
