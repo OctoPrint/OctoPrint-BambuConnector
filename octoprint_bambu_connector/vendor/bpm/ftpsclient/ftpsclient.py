@@ -235,6 +235,9 @@ class IoTFTPSClient:
             with redirect_stdout(f):
                 self.ftps_session.dir(path)
             s = f.getvalue()
+        except ftplib.error_perm:
+            # no permission for this path
+            return []
         except Exception:
             logger.exception("Unexpected exception occurred while fetching file list")
             return []
