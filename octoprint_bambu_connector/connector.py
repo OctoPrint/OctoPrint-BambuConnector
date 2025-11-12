@@ -1,19 +1,20 @@
 import enum
 import logging
-from collections import namedtuple
-from typing import TYPE_CHECKING, Any, Literal, Optional
+import threading
+from typing import TYPE_CHECKING, Any
 
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations
 from octoprint.filemanager.storage import StorageCapabilities
 from octoprint.printer import JobProgress, PrinterFile, PrinterFilesMixin
 from octoprint.printer.connection import (
+    OPERATIONAL_STATES,
+    PRINTING_STATES,
     ConnectedPrinter,
     ConnectedPrinterListenerMixin,
     ConnectedPrinterState,
 )
 from octoprint.printer.job import PrintJob
-from octoprint.schema import BaseModel
 
 from .vendor import bpm
 
@@ -24,142 +25,125 @@ GCODE_STATE_LOOKUP = {
     "INIT": ConnectedPrinterState.CONNECTING,
     "OFFLINE": ConnectedPrinterState.CLOSED,
     "PAUSE": ConnectedPrinterState.PAUSED,
-    "PREPARE": ConnectedPrinterState.TRANSFERRING_FILE,
+    "PREPARE": ConnectedPrinterState.STARTING,
     "RUNNING": ConnectedPrinterState.PRINTING,
     "UNKNOWN": ConnectedPrinterState.CLOSED,
 }
+
 
 RELEVANT_EXTENSIONS = (".gcode", ".gco", ".gcode.3mf")
 IGNORED_FOLDERS = ("/logger", "/recorder", "/timelapse", "/image", "/ipcam")
 MODELS_SDCARD_MOUNT = ()
 
 
-class PrintStatsSupplemental(BaseModel):
-    total_layer: Optional[int] = None
-    current_layer: Optional[int] = None
-
-
-class PrintStats(BaseModel):
-    filename: Optional[str] = None
-
-    total_duration: Optional[float] = None
-    """Elapsed time since start"""
-
-    print_duration: Optional[float] = None
-    """Total duration minus time until first extrusion and pauses, see https://github.com/Klipper3d/klipper/blob/9346ad1914dc50d12f1e5efe630448bf763d1469/klippy/extras/print_stats.py#L112"""
-
-    filament_used: Optional[float] = None
-
-    state: Optional[
-        Literal["standby", "printing", "paused", "complete", "error", "cancelled"]
-    ] = None
-
-    message: Optional[str] = None
-
-    info: Optional[PrintStatsSupplemental] = None
-
-
-class SDCardStats(BaseModel):
-    file_path: Optional[str] = (
-        None  # unset if no file is loaded, path is the path on the file system
-    )
-    progress: Optional[float] = None  # 0.0 to 1.0
-    is_active: Optional[bool] = None  # True if a print is ongoing
-    file_position: Optional[int] = None
-    file_size: Optional[int] = None
-
-
-class IdleTimeout(BaseModel):
-    state: Optional[Literal["Printing", "Ready", "Idle"]] = (
-        None  # "Printing" means some commands are being executed!
-    )
-    printing_time: Optional[float] = (
-        None  # Duration of "Printing" state, resets on state change to "Ready"
-    )
-
-
-Coordinate = namedtuple("Coordinate", "x, y, z, e")
-
-
-class PositionData(BaseModel):
-    speed_factor: Optional[float] = None
-    speed: Optional[float] = None
-    extruder_factor: Optional[float] = None
-    absolute_coordinates: Optional[bool] = None
-    absolute_extrude: Optional[bool] = None
-    homing_origins: Optional[Coordinate] = None  # offsets
-    position: Optional[Coordinate] = None  # current w/ offsets
-    gcode_position: Optional[Coordinate] = None  # current w/o offsets
-
-
-class TemperatureDataPoint:
-    actual: float = 0.0
-    target: float = 0.0
-
-    def __init__(self, actual: float = 0.0, target: float = 0.0):
-        self.actual = actual
-        self.target = target
-
-    def __str__(self):
-        return f"{self.actual} / {self.target}"
-
-    def __repr__(self):
-        return f"TemperatureDataPoint({self.actual}, {self.target})"
-
-
-class BambuState(enum.Enum):
-    READY = "ready"
-    ERROR = "error"
-    SHUTDOWN = "shutdown"
-    STARTUP = "startup"
-    DISCONNECTED = "disconnected"
-    UNKNOWN = "unknown"
-
-    @classmethod
-    def for_value(cls, value: str) -> "BambuState":
-        for state in cls:
-            if state.value == value:
-                return state
-        return BambuState.UNKNOWN
-
-
-class PrinterState(enum.Enum):
-    STANDBY = "standby"
-    PRINTING = "printing"
-    PAUSED = "paused"
-    COMPLETE = "complete"
-    ERROR = "error"
-    CANCELLED = "cancelled"
-    UNKNOWN = "unknown"
-    RUNNING = "running"
-    OPERATIONAL = "FINISH"
-
-    @classmethod
-    def for_value(cls, value: str) -> "PrinterState":
-        for state in cls:
-            if state.value == value:
-                return state
-        return cls.UNKNOWN
-
-
-class IdleState(enum.Enum):
-    PRINTING = "Printing"
-    READY = "Ready"
-    IDLE = "Idle"
-    UNKNOWN = "unknown"
-
-    @classmethod
-    def for_value(cls, value: str) -> "IdleState":
-        for state in cls:
-            if state.value == value:
-                return state
-        return cls.UNKNOWN
-
-
 if TYPE_CHECKING:
     from octoprint.events import EventManager
     from octoprint.filemanager import FileManager
     from octoprint.plugin import PluginManager, PluginSettings
+
+
+class GcodeState(enum.Enum):
+    FAILED = "FAILED"
+    FINISH = "FINISH"
+    IDLE = "IDLE"
+    INIT = "INIT"
+    OFFLINE = "OFFLINE"
+    PAUSE = "PAUSE"
+    PREPARE = "PREPARE"
+    RUNNING = "RUNNING"
+    UNKNOWN = "UNKNOWN"
+
+    @classmethod
+    def for_value(cls, value: str) -> "GcodeState":
+        for state in cls:
+            if state.value == value:
+                return state
+        return GcodeState.UNKNOWN
+
+
+OPERATIONAL_GCODE_STATES = (
+    GcodeState.IDLE,
+    GcodeState.FAILED,
+    GcodeState.FINISH,
+    GcodeState.PAUSE,
+    GcodeState.PREPARE,
+    GcodeState.RUNNING,
+)
+
+PRINTING_GCODE_STATES = (
+    GcodeState.PAUSE,
+    GcodeState.PREPARE,
+    GcodeState.RUNNING,
+)
+
+
+class JobStage(enum.Enum):
+    PRINTING = 0
+    AUTO_BED_LEVELING = 1
+    HEATBED_PREHEATING = 2
+    SWEEPING_XY_MECH_MODE = 3
+    CHANGING_FILAMENT = 4
+    M400_PAUSE = 5
+    RUNOUT_PAUSE = 5
+    HEATING_HOTEND = 7
+    CALIBRATING_EXTRUSION = 8
+    SCANNING_BED_SURFACE = 9
+    INSPECTING_FIRST_LAYER = 10
+    IDENTIFYING_BUILD_PLATE_TYPE = 11
+    CALIBRATING_MICRO_LIDAR = 12
+    HOMING_TOOLHEAD = 13
+    CLEANING_NOZZLE_TIP = 14
+    CHECKING_EXTRUDER_TEMPERATURE = 15
+    USER_PAUSE = 16
+    FRONT_COVER_ERROR = 17
+    CALIBRATING_MICRO_LIDAR_2 = 18
+    CALIBRATING_EXTRUSION_2 = 19
+    NOZZLE_TEMPERATURE_ERROR = 20
+    BED_TEMPERATURE_ERROR = 21
+    FILAMENT_UNLOADING = 22
+    SKIPPED_STEPS_ERROR = 23
+    FILAMENT_LOADING = 24
+    CALIBRATING_MOTOR_NOISE = 25
+    AMS_LOST_ERROR = 26
+    HEAT_BREAK_FAN_ERROR = 27
+    CHAMBER_TEMPERATURE_ERROR = 28
+    COOLING_CHAMBER = 29
+    GCODE_PAUSE = 30
+    MOTOR_NOISE_SHOWOFF = 31
+    NOZZLE_FILAMENT_COVERED_ERROR = 32
+    CUTTER_ERROR = 33
+    FIRST_LAYER_ERROR = 34
+    NOZZLE_CLOG_ERROR = 35
+
+    FINISHING = 255
+
+    UNKNOWN = -1
+
+    @classmethod
+    def for_value(cls, value: int) -> "JobStage":
+        for state in cls:
+            if state.value == value:
+                return state
+        return JobStage.UNKNOWN
+
+
+STARTING_JOB_STAGES = (
+    JobStage.AUTO_BED_LEVELING,
+    JobStage.HEATBED_PREHEATING,
+    JobStage.SWEEPING_XY_MECH_MODE,
+    JobStage.HEATING_HOTEND,
+    JobStage.SCANNING_BED_SURFACE,
+    JobStage.IDENTIFYING_BUILD_PLATE_TYPE,
+    JobStage.CALIBRATING_EXTRUSION,
+    JobStage.CALIBRATING_EXTRUSION_2,
+    JobStage.CALIBRATING_MICRO_LIDAR,
+    JobStage.CALIBRATING_MICRO_LIDAR_2,
+    JobStage.CALIBRATING_MOTOR_NOISE,
+    JobStage.CLEANING_NOZZLE_TIP,
+    JobStage.CHECKING_EXTRUDER_TEMPERATURE,
+)
+
+FINISHING_JOB_STAGES = (JobStage.FINISHING,)
 
 
 class ConnectedBambuPrinter(
@@ -211,16 +195,17 @@ class ConnectedBambuPrinter(
         self._client = None
 
         self._state = ConnectedPrinterState.CLOSED
+        self._connection_state: bpm.bambuprinter.PrinterState = (
+            bpm.bambuprinter.PrinterState.NO_STATE
+        )
+        self._gcode_state = GcodeState.UNKNOWN
+        self._job_stage = JobStage.UNKNOWN
+
         self._error = None
 
         self._progress: JobProgress = None
-        self._job_cache: str = None
 
         self._files: list[PrinterFile] = []
-
-        self._printer_state: PrinterState = PrinterState.UNKNOWN
-        self._idle_state: IdleState = IdleState.UNKNOWN
-        self._position: Coordinate = None
 
     @property
     def connection_parameters(self):
@@ -252,14 +237,48 @@ class ConnectedBambuPrinter(
 
         if (
             old_state == ConnectedPrinterState.CONNECTING
-            and state == ConnectedPrinterState.OPERATIONAL
+            and state in OPERATIONAL_STATES
         ):
-            self._listener.on_printer_files_available(True)
-            self._listener.on_printer_files_refreshed(
-                self.get_printer_files(refresh=True)
+            self._event_bus.fire(
+                Events.CONNECTED,
+                {
+                    "connector": self.name,
+                    "host": self._host,
+                    "serial": self._serial,
+                    "access_code": self._access_code is not None,
+                },
             )
-            self._logger.info(f"Files: {self._files}")
-            pass
+
+        if state in OPERATIONAL_STATES:
+            if old_state not in OPERATIONAL_STATES:
+                # we just connected
+                self.refresh_printer_files(blocking=True)
+                self._listener.on_printer_files_available(True)
+
+            if state in PRINTING_STATES:
+                if old_state not in PRINTING_STATES and not self.current_job:
+                    # we went from not printing to printing without having a job
+                    # -> this was triggered by the printer!
+                    self.set_job(PrintJob(storage=FileDestinations.PRINTER, path="???"))
+                    self._listener.on_printer_job_changed(self.current_job)
+
+            elif old_state in PRINTING_STATES:
+                # we went from printing to not printing, so the current job is done
+                # one way or the other
+
+                if self._gcode_state == GcodeState.FINISH:
+                    # job completed
+                    if self._progress is not None:
+                        self._progress.progress = 1.0
+                    self._listener.on_printer_job_done()
+
+                elif self._gcode_state == GcodeState.FAILED:
+                    # job failed
+                    self._listener.on_printer_job_cancelled()
+
+                else:
+                    # TODO no clue what best to do here...
+                    pass
 
         super().set_state(state, error=error)
 
@@ -300,9 +319,11 @@ class ConnectedBambuPrinter(
             printer.on_update = self._on_bpm_update
 
             printer.start_session()
-        except Exception as e:
-            self._logger.exception(e)
-            self.set_state(ConnectedPrinterState.CLOSED_WITH_ERROR, f"{e}")
+        except Exception as exc:
+            self._logger.exception(
+                "Error while connecting to bambu printer through bpm"
+            )
+            self.set_state(ConnectedPrinterState.CLOSED_WITH_ERROR, error=str(exc))
             return False
 
         self._client = printer
@@ -425,13 +446,19 @@ class ConnectedBambuPrinter(
         raise NotImplementedError()
 
     def pause_print(self, tags=None, *args, **kwargs):
-        raise NotImplementedError()
+        if self._client is None:
+            return
+        self._client.pause_printing()
 
     def resume_print(self, tags=None, *args, **kwargs):
-        raise NotImplementedError()
+        if self._client is None:
+            return
+        self._client.resume_printing()
 
     def cancel_print(self, tags=None, *args, **kwargs):
-        raise NotImplementedError()
+        if self._client is None:
+            return
+        self._client.stop_printing()
 
     # ~~ PrinterFilesMixin
 
@@ -440,20 +467,33 @@ class ConnectedBambuPrinter(
         return self._client is not None
 
     def refresh_printer_files(
-        self, blocking=False, timeout=10, *args, **kwargs
+        self, blocking=False, timeout=30, *args, **kwargs
     ) -> None:
-        if not self._client or not self._client.connected:
+        if (
+            not self._client
+            or not self._client.state == bpm.bambuprinter.PrinterState.CONNECTED
+        ):
+            self._files = []
             return
 
-        raise NotImplementedError()
+        def perform_refresh():
+            files = self._client.get_sdcard_contents()
+            self._files = self._to_printer_files(files.get("children", []))
+            self._listener.on_printer_files_refreshed(self._files)
+
+        thread = threading.Thread(target=perform_refresh)
+        thread.daemon = True
+        thread.start()
+
+        if blocking:
+            thread.join(timeout=timeout)
 
     def get_printer_files(self, refresh=False, recursive=False, *args, **kwargs):
         if not self.printer_files_mounted:
             return []
 
         if not self._files or refresh:
-            files = self._client.get_sdcard_contents()
-            self._files = self._to_printer_files(files.get("children", []))
+            self.refresh_printer_files(blocking=True)
 
         return self._files
 
@@ -490,24 +530,122 @@ class ConnectedBambuPrinter(
 
     # ~~ BPM callback
 
-    def _on_bpm_update(self, printer: bpm.bambuprinter.BambuPrinter):
+    def _on_bpm_update(self, printer: bpm.bambuprinter.BambuPrinter) -> None:
         if printer != self._client:
             return
 
-        if self.state == ConnectedPrinterState.CONNECTING:
-            self.state = ConnectedPrinterState.OPERATIONAL
-            eventManager().fire(
-                Events.CONNECTED,
-                {
-                    "connector": self.name,
-                    "host": self._host,
-                    "serial": self._serial,
-                    "access_code": self._access_code is not None,
-                },
+        try:
+            self._update_job_from_state(printer)
+            self._update_state_from_state(printer)
+            self._update_progress_from_state(printer)
+            self._update_temperatures_from_state(printer)
+        except Exception:
+            self._logger.exception("Error while processing BPM update")
+
+    def _update_job_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
+        if self.state not in OPERATIONAL_STATES:
+            return
+
+        current_path = printer.subtask_name
+        if not current_path:
+            return
+
+        if self.current_job and (
+            self.current_job.path == current_path
+            or self.current_job.storage != FileDestinations.PRINTER
+        ):
+            return
+
+        display = current_path.rsplit("/")[-1]
+
+        size = 0
+        if self._files:
+            for f in self._files:
+                if f.path == current_path:
+                    size = f.size
+                    break
+
+        job = PrintJob(
+            storage=FileDestinations.PRINTER,
+            path=current_path,
+            display=display,
+            size=size,
+        )
+
+        self.set_job(job)
+        self._listener.on_printer_job_changed(job)
+
+    def _update_state_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
+        self._connection_state = printer.state
+        self._gcode_state = GcodeState.for_value(printer.gcode_state)
+        self._current_stage = JobStage.for_value(printer.current_stage)
+
+        self._logger.debug(
+            f"STATE UPDATE -- printer_state = {self._connection_state} - gcode_state = {self._gcode_state} - current_stage = {self._current_stage} ({printer.current_stage})"
+        )
+
+        new_state = None
+
+        if self._connection_state == bpm.bambuprinter.PrinterState.CONNECTED:
+            if self._gcode_state in PRINTING_GCODE_STATES:
+                if self._gcode_state == GcodeState.PREPARE:
+                    new_state = ConnectedPrinterState.STARTING
+
+                elif self._gcode_state == GcodeState.RUNNING:
+                    if self._current_stage == JobStage.PRINTING:
+                        new_state = ConnectedPrinterState.PRINTING
+                    elif (
+                        self._current_stage in FINISHING_JOB_STAGES
+                        and self.state in PRINTING_STATES
+                    ):
+                        new_state = ConnectedPrinterState.FINISHING
+                    elif self.state not in PRINTING_STATES:
+                        new_state = ConnectedPrinterState.STARTING
+
+                elif self._gcode_state == GcodeState.PAUSE:
+                    new_state = ConnectedPrinterState.PAUSED
+
+            elif self._gcode_state in OPERATIONAL_GCODE_STATES or (
+                self.state == ConnectedPrinterState.CONNECTING
+                and self._gcode_state == GcodeState.UNKNOWN
+            ):
+                new_state = ConnectedPrinterState.OPERATIONAL
+
+            elif self._gcode_state == GcodeState.INIT:
+                new_state = ConnectedPrinterState.CONNECTING
+
+            elif self._gcode_state == GcodeState.OFFLINE:
+                new_state = ConnectedPrinterState.CLOSED
+
+        else:
+            new_state = ConnectedPrinterState.CLOSED
+
+        if new_state:
+            self.set_state(new_state)
+
+    def _update_progress_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
+        if self.current_job is None:
+            return
+
+        if self.state not in PRINTING_STATES:
+            return
+
+        if self._progress is None:
+            self._progress = JobProgress(
+                job=self.current_job,
+                progress=0.0,
+                pos=0,
+                elapsed=0.0,
+                cleaned_elapsed=0.0,
             )
 
-        # self._evaluate_state(printer)
+        self._progress.progress = float(printer.percent_complete) / 100.0
+        self._progress.left_estimate = printer.time_remaining * 60.0
+        if self.current_job and self.current_job.size:
+            self._progress.pos = self.current_job.size * self._progress.progress
+        self._listener.on_printer_job_progress()
 
+    def _update_temperatures_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
         self._listener.on_printer_temperature_update(
             {
                 "tool0": (printer.tool_temp, printer.tool_temp_target),
@@ -517,58 +655,6 @@ class ConnectedBambuPrinter(
         )
 
     ##~~ helpers
-
-    def _evaluate_actual_status(self):
-        if self.state in (
-            ConnectedPrinterState.STARTING,
-            ConnectedPrinterState.RESUMING,
-        ):
-            if self._printer_state != PrinterState.PRINTING:
-                # not yet printing
-                return
-
-            if self.state == ConnectedPrinterState.STARTING:
-                self._listener.on_printer_job_started()
-            else:
-                self._listener.on_printer_job_resumed()
-            self.state = ConnectedPrinterState.PRINTING
-
-        elif self.state in (
-            ConnectedPrinterState.FINISHING,
-            ConnectedPrinterState.CANCELLING,
-            ConnectedPrinterState.PAUSING,
-        ):
-            if self._idle_state == IdleState.PRINTING:
-                # still printing
-                return
-
-            if (
-                self.state == ConnectedPrinterState.FINISHING
-                and self._printer_state
-                in (
-                    PrinterState.COMPLETE,
-                    PrinterState.STANDBY,
-                )
-            ):
-                # print done
-                self._progress.progress = 1.0
-                self._listener.on_printer_job_done()
-                self.state = ConnectedPrinterState.OPERATIONAL
-            elif (
-                self.state == ConnectedPrinterState.CANCELLING
-                and self._printer_state
-                in (PrinterState.CANCELLED, PrinterState.ERROR, PrinterState.STANDBY)
-            ):
-                # print failed
-                self._listener.on_printer_job_cancelled()
-                self.state = ConnectedPrinterState.OPERATIONAL
-            elif (
-                self.state == ConnectedPrinterState.PAUSING
-                and self._printer_state == PrinterState.PAUSED
-            ):
-                # print paused
-                self._listener.on_printer_job_paused()
-                self.state = ConnectedPrinterState.PAUSED
 
     def _to_printer_files(self, nodes: list[dict[str, Any]]) -> list[PrinterFile]:
         result = []
