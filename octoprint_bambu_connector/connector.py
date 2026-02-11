@@ -245,7 +245,7 @@ class ConnectedBambuPrinter(
         self._ptz = None
 
         timezone_str = self._plugin_settings.get(["printer_timezone"])
-        if timezone_str is not None:
+        if timezone_str is not None and timezone_str != "":
             try:
                 self._ptz = zoneinfo.ZoneInfo(timezone_str)
             except Exception:

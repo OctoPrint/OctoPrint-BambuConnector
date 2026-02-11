@@ -103,7 +103,7 @@ class BambuConnectorPlugin(
 
 
 def support_gcode_3mf_machinecode(*args, **kwargs):
-    return {"machinecode": {"3mf": ("gcode.3mf",)}}
+    return {"machinecode": {"3mf": ("3mf",)}}
 
 
 __plugin_name__ = "Bambu Connector"
