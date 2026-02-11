@@ -637,29 +637,29 @@ class ConnectedBambuPrinter(
         raise NotImplementedError()
 
     def upload_printer_file(
-        self, path_or_file, path, upload_callback, *args, **kwargs
+        self, source, target, progress_callback: callable = None, *args, **kwargs
     ) -> str:
         try:
-            path = os.path.join("/", path)
+            path = os.path.join("/", target)
 
-            if isinstance(path_or_file, str):
+            if isinstance(source, str):
                 # this is a path, we can use this right away
-                files = self._client.upload_sdcard_file(path_or_file, path)
+                files = self._client.upload_sdcard_file(source, path)
             else:
                 # this is a stream, we need to dump it into a temporary file before we can proceed
                 with tempfile.NamedTemporaryFile(mode="wb", delete=False) as temp:
                     try:
-                        temp.write(path_or_file.read())
+                        temp.write(source.read())
                         temp.close()
                         files = self._client.upload_sdcard_file(temp.name, path)
                     finally:
                         os.remove(temp.name)
 
             self._update_file_cache(files)
-            upload_callback(done=True)
+            progress_callback(done=True)
             return path
         except Exception as exc:
-            upload_callback(failed=True)
+            progress_callback(failed=True)
             raise PrinterFilesError(f"There was an error uploading to {path}") from exc
 
     def download_printer_file(self, path, *args, **kwargs):
@@ -725,7 +725,8 @@ class ConnectedBambuPrinter(
                 with zipfile.ZipFile(file, "r") as zipObj:
                     for zipFileName in zipObj.namelist():
                         filename_match = re.match(
-                            r"Metadata/(?P<filename>plate_\d+.png)", zipFileName
+                            r"Metadata/(?P<filename>plate_\d+(_small)?.png)",
+                            zipFileName,
                         )
                         if filename_match:
                             zipInfo = zipObj.getinfo(zipFileName)
@@ -789,11 +790,10 @@ class ConnectedBambuPrinter(
 
         if printer.current_3mf_file:
             current_path = printer.current_3mf_file
-        elif (
-            printer.subtask_name
-            and (
-                any(f"{printer.subtask_name}" in file.path for file in self._files)
-                or any(f"{printer.subtask_name}.gcode.3mf" in file.path for file in self._files)
+        elif printer.subtask_name and (
+            any(f"{printer.subtask_name}" in file.path for file in self._files)
+            or any(
+                f"{printer.subtask_name}.gcode.3mf" in file.path for file in self._files
             )
         ):
             if printer.subtask_name.endswith(".gcode.3mf"):
@@ -842,7 +842,9 @@ class ConnectedBambuPrinter(
         )
 
         if self._job_stage != old_stage and printer.printer_state.current_stage_name:
-            self._to_terminal(f"Current stage: {printer.printer_state.current_stage_name}")
+            self._to_terminal(
+                f"Current stage: {printer.printer_state.current_stage_name}"
+            )
 
         new_state = None
         error = None
@@ -931,9 +933,18 @@ class ConnectedBambuPrinter(
     def _update_temperatures_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
         self._listener.on_printer_temperature_update(
             {
-                "tool0": (printer.printer_state.active_nozzle_temp, printer.printer_state.active_nozzle_temp_target),
-                "bed": (printer.printer_state.climate.bed_temp, printer.printer_state.climate.bed_temp_target),
-                "chamber": (printer.printer_state.climate.chamber_temp, printer.printer_state.climate.chamber_temp_target),
+                "tool0": (
+                    printer.printer_state.active_nozzle_temp,
+                    printer.printer_state.active_nozzle_temp_target,
+                ),
+                "bed": (
+                    printer.printer_state.climate.bed_temp,
+                    printer.printer_state.climate.bed_temp_target,
+                ),
+                "chamber": (
+                    printer.printer_state.climate.chamber_temp,
+                    printer.printer_state.climate.chamber_temp_target,
+                ),
             }
         )
 
