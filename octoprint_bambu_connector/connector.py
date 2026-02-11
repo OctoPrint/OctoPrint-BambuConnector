@@ -725,7 +725,8 @@ class ConnectedBambuPrinter(
                 with zipfile.ZipFile(file, "r") as zipObj:
                     for zipFileName in zipObj.namelist():
                         filename_match = re.match(
-                            r"Metadata/(?P<filename>plate_\d+.png)", zipFileName
+                            r"Metadata/(?P<filename>plate_\d+(_small)?.png)",
+                            zipFileName,
                         )
                         if filename_match:
                             zipInfo = zipObj.getinfo(zipFileName)
