@@ -94,10 +94,10 @@ class BambuConnectorPlugin(
                 "displayName": "Bambu Connector",
                 "displayVersion": self._plugin_version,
                 "type": "github_release",
-                "user": "jneilliii",
+                "user": "OctoPrint",
                 "repo": "OctoPrint-BambuConnector",
                 "current": self._plugin_version,
-                "pip": "https://github.com/jneilliii/OctoPrint-BambuConnector/archive/{target_version}.zip",
+                "pip": "https://github.com/OctoPrint/OctoPrint-BambuConnector/archive/{target_version}.zip",
             }
         }
 
