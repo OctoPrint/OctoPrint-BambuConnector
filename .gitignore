@@ -9,3 +9,4 @@ dist
 *.zip
 .*_cache
 __pycache__
+/extras
