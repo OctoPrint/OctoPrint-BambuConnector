@@ -623,7 +623,7 @@ class ConnectedBambuPrinter(
     ):
         path = os.path.join("/", target)
         try:
-            files = self._client.delete_sdcard_file(path)
+            files = self._client.delete_sdcard_folder(path)
             self._update_file_cache(files)
         except Exception as exc:
             message = f"There was an error deleting folder {path}"
@@ -788,9 +788,9 @@ class ConnectedBambuPrinter(
         if self.state not in OPERATIONAL_STATES:
             return
 
-        if printer.current_3mf_file:
-            current_path = printer.current_3mf_file
-        elif printer.subtask_name and (
+        # if printer.current_3mf_file:
+        #     current_path = printer.current_3mf_file
+        if printer.subtask_name and (
             any(f"{printer.subtask_name}" in file.path for file in self._files)
             or any(
                 f"{printer.subtask_name}.gcode.3mf" in file.path for file in self._files
@@ -814,10 +814,12 @@ class ConnectedBambuPrinter(
         display = current_path.rsplit("/")[-1]
 
         size = 0
+        date = None
         if self._files:
             for f in self._files:
                 if f.path == current_path:
                     size = f.size
+                    date = f.date
                     break
 
         job = PrintJob(
@@ -825,6 +827,7 @@ class ConnectedBambuPrinter(
             path=current_path,
             display=display,
             size=size,
+            date=date,
         )
 
         self.set_job(job)
