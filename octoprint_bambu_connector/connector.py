@@ -357,7 +357,7 @@ class ConnectedBambuPrinter(
         return self._progress
 
     def connect(self, *args, **kwargs):
-        from . import BambuRolloverLogHandler
+        from . import BambuFormatter, BambuRolloverLogHandler
 
         if (
             self._client is not None
@@ -368,6 +368,7 @@ class ConnectedBambuPrinter(
             return
 
         BambuRolloverLogHandler.arm_rollover()
+        BambuFormatter.masked = [self._host, self._serial, self._access_code]
 
         eventManager().fire(Events.CONNECTING)
         self.set_state(ConnectedPrinterState.CONNECTING)

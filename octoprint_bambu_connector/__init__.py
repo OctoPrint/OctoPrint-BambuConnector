@@ -1,3 +1,4 @@
+import logging
 import os
 
 import octoprint.plugin
@@ -10,6 +11,25 @@ DEFAULT_PRINTER_TIMEZONE = "Asia/Shanghai"
 
 class BambuRolloverLogHandler(TriggeredRolloverLogHandler):
     pass
+
+
+class BambuFormatter(logging.Formatter):
+    masked: list[str] = []
+    mask: str = "*****"
+
+    @classmethod
+    def set_masked(cls, masked: list[str]):
+        cls.masked = masked
+
+    @classmethod
+    def set_mask(cls, mask: str):
+        cls.mask = mask
+
+    def format(self, record):
+        text = super().format(record)
+        for m in self.masked:
+            text = text.replace(m, self.mask)
+        return text
 
 
 class BambuConnectorPlugin(
@@ -30,7 +50,23 @@ class BambuConnectorPlugin(
             self.get_plugin_data_folder(), "thumbs"
         )
 
-        self._logging_handler = None
+    def on_startup(self, host, port):
+        self._configure_bpm_logging()
+
+    def _configure_bpm_logging(self):
+        handler = BambuRolloverLogHandler(
+            self._settings.get_plugin_logfile_path(postfix="bpm"),
+            encoding="utf-8",
+            backupCount=3,
+            delay=True,
+        )
+        handler.setFormatter(BambuFormatter("%(asctime)s %(message)s"))
+        handler.setLevel(logging.DEBUG)
+
+        logger = logging.getLogger("bambu_printer_manager")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
 
     # ~~ Template Plugin mixin
 
