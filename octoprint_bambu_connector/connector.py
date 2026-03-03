@@ -10,7 +10,6 @@ import threading
 import time
 import zipfile
 import zoneinfo
-from concurrent.futures import ThreadPoolExecutor
 from typing import IO, TYPE_CHECKING, Any, Optional
 
 import bpm
@@ -777,17 +776,12 @@ class ConnectedBambuPrinter(
         if not len(paths):
             return
 
-        executor = ThreadPoolExecutor(max_workers=2)
-
-        def process(p):
-            try:
-                self._fetch_thumbnails(p)
-            except PrinterFilesError:
-                pass
-
         for p in paths:
             if force or not self._thumbnails_cached(p):
-                executor.submit(process, p)
+                try:
+                    self._fetch_thumbnails(p)
+                except PrinterFilesError:
+                    pass
 
     def _to_storage_thumbnail(self, path: str) -> StorageThumbnail:
         name = path
