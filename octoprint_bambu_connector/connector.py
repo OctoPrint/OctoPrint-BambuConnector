@@ -7,8 +7,10 @@ import os
 import re
 import tempfile
 import threading
+import time
 import zipfile
 import zoneinfo
+from concurrent.futures import ThreadPoolExecutor
 from typing import IO, TYPE_CHECKING, Any, Optional
 
 import bpm
@@ -671,7 +673,17 @@ class ConnectedBambuPrinter(
                 # delete_on_close=False, delete=True would be better, but delete_on_close is only available from Python 3.12 onward
                 try:
                     temp.close()
+
+                    start = time.monotonic()
                     self._client.download_sdcard_file(src, temp.name)
+                    duration = time.monotonic() - start
+                    if self._logger.isEnabledFor(logging.DEBUG):
+                        size = os.stat(temp.name).st_size
+                        speed = size / duration / 1024.0  # KB/s
+                        self._logger.debug(
+                            f"Fetched {path} in {duration:0.2f}s at {speed:0.2f}KB/s"
+                        )
+
                     with open(temp.name, "rb") as f:
                         file_object = io.BytesIO(f.read())
                     return file_object
@@ -716,33 +728,20 @@ class ConnectedBambuPrinter(
     def download_thumbnail(
         self, path, sizehint=None, *args, **kwargs
     ) -> Optional[tuple[StorageThumbnail, IO]]:
-        thumbnails_path = os.path.join(self._thumbs_cache_folder, path)
+        thumbnails_path = self._thumbnails_path(path)
+        if not os.path.exists(thumbnails_path) or len(os.listdir(thumbnails_path)) == 0:
+            self._fetch_thumbnails(path)
+
+        if not os.path.isdir(thumbnails_path):
+            return None
+
         try:
-            if (
-                not os.path.exists(thumbnails_path)
-                or len(os.listdir(thumbnails_path)) == 0
-            ):
-                file = self.download_printer_file(path)
-                with zipfile.ZipFile(file, "r") as zipObj:
-                    for zipFileName in zipObj.namelist():
-                        filename_match = re.match(
-                            r"Metadata/(?P<filename>plate_\d+(_small)?.png)",
-                            zipFileName,
-                        )
-                        if filename_match:
-                            zipInfo = zipObj.getinfo(zipFileName)
-                            zipInfo.filename = filename_match.group("filename")
-                            zipObj.extract(zipInfo, thumbnails_path)
+            # touch the path so we know it has recently been accessed
+            os.utime(thumbnails_path, None)
+        except OSError:
+            pass
 
-            if not os.path.isdir(thumbnails_path):
-                return None
-
-            try:
-                # touch the path so we know it has recently been accessed
-                os.utime(thumbnails_path, None)
-            except OSError:
-                pass
-
+        try:
             thumbnail_path = os.path.join(
                 thumbnails_path, os.listdir(thumbnails_path)[0]
             )
@@ -750,10 +749,45 @@ class ConnectedBambuPrinter(
                 info = self._to_storage_thumbnail(thumbnail_path)
                 return info, open(thumbnail_path, mode="rb")
         except Exception as exc:
-            message = f"There was an error extracting thumbnail for {path}"
+            message = f"There was an error downloading the thumbnail for {path}"
             self._logger.exception(message)
             raise PrinterFilesError(message) from exc
         return None
+
+    def refresh_thumbnails(self, path, force=False, recursive=False):
+        if self._is_dir(path):
+            # directory
+            prefix = f"{path}/"
+            children = [item for item in self._files if item.path.startswith(prefix)]
+            paths = []
+            for child in children:
+                if not recursive and "/" in child.path[len(prefix) :]:
+                    continue
+                if not child.path.endswith(".3mf"):
+                    continue
+                paths.append(child.path)
+
+        else:
+            # single file
+            if not path.endswith(".3mf"):
+                return
+
+            paths = [path]
+
+        if not len(paths):
+            return
+
+        executor = ThreadPoolExecutor(max_workers=2)
+
+        def process(p):
+            try:
+                self._fetch_thumbnails(p)
+            except PrinterFilesError:
+                pass
+
+        for p in paths:
+            if force or not self._thumbnails_cached(p):
+                executor.submit(process, p)
 
     def _to_storage_thumbnail(self, path: str) -> StorageThumbnail:
         name = path
@@ -770,6 +804,44 @@ class ConnectedBambuPrinter(
             size=stat.st_size,
             last_modified=int(stat.st_mtime),
         )
+
+    def _fetch_thumbnails(self, path: str):
+        if not path.endswith(".3mf"):
+            return
+
+        thumbnails_path = self._thumbnails_path(path)
+        try:
+            file = self.download_printer_file(path)
+            with zipfile.ZipFile(file, "r") as zipObj:
+                for zipFileName in zipObj.namelist():
+                    filename_match = re.match(
+                        r"Metadata/(?P<filename>plate_\d+(_small)?.png)",
+                        zipFileName,
+                    )
+                    if filename_match:
+                        filename = filename_match.group("filename")
+
+                        zipInfo = zipObj.getinfo(zipFileName)
+                        zipInfo.filename = filename
+                        zipObj.extract(zipInfo, thumbnails_path)
+
+                        self._logger.debug(f"Cached thumbnail {filename} for {path}")
+        except Exception as exc:
+            message = f"There was an error extracting thumbnail for {path}"
+            self._logger.exception(message)
+            raise PrinterFilesError(message) from exc
+
+    def _thumbnails_path(self, path: str):
+        return os.path.join(self._thumbs_cache_folder, path)
+
+    def _thumbnails_cached(self, path: str):
+        thumbnails_path = self._thumbnails_path(path)
+        return os.path.exists(thumbnails_path) and len(os.listdir(thumbnails_path)) > 0
+
+    def _is_dir(self, path: str) -> bool:
+        if path.endswith("/"):
+            return True
+        return any(item.path.startswith(f"{path}/") for item in self._files)
 
     # ~~ BPM callback
 
