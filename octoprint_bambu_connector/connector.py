@@ -742,7 +742,9 @@ class ConnectedBambuPrinter(
 
         try:
             thumbnail_path = os.path.join(
-                thumbnails_path, os.listdir(thumbnails_path)[0]
+                # thumbnails_path, os.listdir(thumbnails_path)[0]
+                thumbnails_path,
+                self.current_job.params.get("thumbnail", "plate_1.png"),
             )
             if os.path.exists(thumbnail_path):
                 info = self._to_storage_thumbnail(thumbnail_path)
@@ -893,12 +895,19 @@ class ConnectedBambuPrinter(
                     date = f.date
                     break
 
+        # better way to do this?
+        thumbnail_path = (
+            os.path.splitext(os.path.split(printer.active_job_info.gcode_file)[1])[0]
+            + ".png"
+        )
+
         job = PrintJob(
             storage=FileDestinations.PRINTER,
             path=current_path,
             display=display,
             size=size,
             date=date,
+            params={"thumbnail": thumbnail_path},
         )
 
         self.set_job(job)
