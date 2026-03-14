@@ -857,18 +857,22 @@ class ConnectedBambuPrinter(
 
         # if printer.current_3mf_file:
         #     current_path = printer.current_3mf_file
-        if printer.subtask_name and (
-            any(f"{printer.subtask_name}" in file.path for file in self._files)
+        if printer.active_job_info.subtask_name and (
+            any(
+                f"{printer.active_job_info.subtask_name}" in file.path
+                for file in self._files
+            )
             or any(
-                f"{printer.subtask_name}.gcode.3mf" in file.path for file in self._files
+                f"{printer.active_job_info.subtask_name}.gcode.3mf" in file.path
+                for file in self._files
             )
         ):
-            if printer.subtask_name.endswith(".gcode.3mf"):
-                current_path = printer.subtask_name
+            if printer.active_job_info.subtask_name.endswith(".gcode.3mf"):
+                current_path = printer.active_job_info.subtask_name
             else:
-                current_path = f"{printer.subtask_name}.gcode.3mf"
-        elif printer.gcode_file:
-            current_path = printer.gcode_file
+                current_path = f"{printer.active_job_info.subtask_name}.gcode.3mf"
+        elif printer.active_job_info.gcode_file:
+            current_path = printer.active_job_info.gcode_file
         else:
             return
 
@@ -905,16 +909,14 @@ class ConnectedBambuPrinter(
 
         self._connection_state = printer.service_state
         self._gcode_state = GcodeState.for_value(printer.printer_state.gcode_state)
-        self._job_stage = JobStage.for_value(printer.printer_state.current_stage_id)
+        self._job_stage = JobStage.for_value(printer.active_job_info.stage_id)
 
         self._logger.debug(
-            f"STATE UPDATE -- printer_state = {self._connection_state} - gcode_state = {self._gcode_state} - current_stage = {self._job_stage} ({printer.printer_state.current_stage_id})"
+            f"STATE UPDATE -- printer_state = {self._connection_state} - gcode_state = {self._gcode_state} - current_stage = {self._job_stage} ({printer.active_job_info.stage_id})"
         )
 
-        if self._job_stage != old_stage and printer.printer_state.current_stage_name:
-            self._to_terminal(
-                f"Current stage: {printer.printer_state.current_stage_name}"
-            )
+        if self._job_stage != old_stage and printer.active_job_info.stage_name:
+            self._to_terminal(f"Current stage: {printer.active_job_info.stage_name}")
 
         new_state = None
         error = None
@@ -959,7 +961,7 @@ class ConnectedBambuPrinter(
                 new_state = ConnectedPrinterState.CLOSED
 
         if new_state:
-            self._state_context = (new_state, printer.printer_state.current_stage_name)
+            self._state_context = (new_state, printer.active_job_info.stage_name)
             self.set_state(new_state, error=error)
 
     def _update_progress_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
@@ -978,24 +980,24 @@ class ConnectedBambuPrinter(
                 cleaned_elapsed=0.0,
             )
 
-        progress = printer.printer_state.print_percentage
+        progress = printer.active_job_info.print_percentage
         if self.state == ConnectedPrinterState.STARTING and progress == 100:
             # left over from a previous print of the same file
             progress = 0
 
         if self.state in PRINTING_STATES and (
             self._old_progress != progress
-            or self._old_time_remaining != printer.printer_state.remaining_minutes
+            or self._old_time_remaining != printer.active_job_info.remaining_minutes
         ):
             self._to_terminal(
-                f"Progress: {progress}%, time remaining: {self._format_minutes(printer.printer_state.remaining_minutes)}"
+                f"Progress: {progress}%, time remaining: {self._format_minutes(printer.active_job_info.remaining_minutes)}"
             )
 
         self._old_progress = progress
-        self._old_time_remaining = printer.printer_state.remaining_minutes
+        self._old_time_remaining = printer.active_job_info.remaining_minutes
 
         self._progress.progress = float(progress) / 100.0
-        self._progress.left_estimate = printer.printer_state.remaining_minutes * 60.0
+        self._progress.left_estimate = printer.active_job_info.remaining_minutes * 60.0
         if self.current_job and self.current_job.size:
             self._progress.pos = int(self.current_job.size * self._progress.progress)
         self._listener.on_printer_job_progress()
