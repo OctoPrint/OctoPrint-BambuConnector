@@ -882,19 +882,9 @@ class ConnectedBambuPrinter(
         else:
             return
 
-        # better way to do this?
-        thumbnail_path = (
-            os.path.splitext(os.path.split(printer.active_job_info.gcode_file)[1])[0]
-            + ".png"
-        )
-
-        if (
-            self.current_job
-            and (
-                self.current_job.path == current_path
-                or self.current_job.storage != FileDestinations.PRINTER
-            )
-            and (self.current_job.params.get("thumbnail") == thumbnail_path)
+        if self.current_job and (
+            self.current_job.path == current_path
+            or self.current_job.storage != FileDestinations.PRINTER
         ):
             return
 
@@ -908,6 +898,12 @@ class ConnectedBambuPrinter(
                     size = f.size
                     date = f.date
                     break
+
+        # better way to do this?
+        thumbnail_path = (
+            os.path.splitext(os.path.split(printer.active_job_info.gcode_file)[1])[0]
+            + ".png"
+        )
 
         job = PrintJob(
             storage=FileDestinations.PRINTER,
