@@ -729,12 +729,12 @@ class ConnectedBambuPrinter(
         return self._thumbs_cache_folder and path.endswith(".3mf")
 
     def get_thumbnail(
-        self, path, sizehint=None, *args, **kwargs
+        self, path, platehint=None, sizehint=None, *args, **kwargs
     ) -> Optional[StorageThumbnail]:
         return self._to_storage_thumbnail(path)
 
     def download_thumbnail(
-        self, path, sizehint=None, *args, **kwargs
+        self, path, platehint=None, sizehint=None, *args, **kwargs
     ) -> Optional[tuple[StorageThumbnail, IO]]:
         thumbnails_path = self._thumbnails_path(path)
         if not os.path.exists(thumbnails_path) or len(os.listdir(thumbnails_path)) == 0:
@@ -750,11 +750,7 @@ class ConnectedBambuPrinter(
             pass
 
         try:
-            thumbnail_file = (
-                self.current_job.params.get("thumbnail", "plate_1.png")
-                if path == self.current_job.path
-                else os.listdir(thumbnails_path)[0]
-            )
+            thumbnail_file = f"plate_{platehint}.png"
             thumbnail_path = os.path.join(
                 thumbnails_path,
                 thumbnail_file,
@@ -891,11 +887,13 @@ class ConnectedBambuPrinter(
         else:
             return
 
-        # better way to do this?
-        thumbnail_path = (
-            os.path.splitext(os.path.split(printer.active_job_info.gcode_file)[1])[0]
-            + ".png"
+        plate = 1
+        plate_match = re.match(
+            r".+plate_(?P<plate>\d+).gcode",
+            printer.active_job_info.gcode_file,
         )
+        if plate_match:
+            plate = int(plate_match.group("plate"))
 
         if (
             self.current_job
@@ -903,7 +901,7 @@ class ConnectedBambuPrinter(
                 self.current_job.path == current_path
                 or self.current_job.storage != FileDestinations.PRINTER
             )
-            and (self.current_job.params.get("thumbnail") == thumbnail_path)
+            and (self.current_job.plate == plate)
         ):
             return
 
@@ -924,7 +922,7 @@ class ConnectedBambuPrinter(
             display=display,
             size=size,
             date=date,
-            params={"thumbnail": thumbnail_path},
+            plate=plate,
         )
 
         self.set_job(job)
