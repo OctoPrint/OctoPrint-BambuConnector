@@ -887,12 +887,12 @@ class ConnectedBambuPrinter(
         else:
             return
 
-        plate = 1
+        plate = printer.active_job_info.plate_num
         plate_match = re.match(
             r".+plate_(?P<plate>\d+).gcode",
             printer.active_job_info.gcode_file,
         )
-        if plate_match:
+        if plate < 0 and plate_match:
             plate = int(plate_match.group("plate"))
 
         if (
