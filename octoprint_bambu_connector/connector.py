@@ -513,15 +513,18 @@ class ConnectedBambuPrinter(
     def start_print(
         self, pos=None, user=None, tags=None, params: dict = None, *args, **kwargs
     ):
-        if not self.active_job.storage == FileDestinations.PRINTER:
+        if (
+            not self.current_job
+            or not self.current_job.storage == FileDestinations.PRINTER
+        ):
             return
 
-        path = os.path.join("/", self.active_job.path)
+        path = os.path.join("/", self.current_job.path)
 
         if params is None:
             params = {}
 
-        job_params = self.active_job.params
+        job_params = self.current_job.params
         if job_params is None:
             job_params = {}
 
