@@ -753,6 +753,9 @@ class ConnectedBambuPrinter(
         except OSError:
             pass
 
+        if platehint is None:
+            platehint = 1
+
         try:
             thumbnail_file = f"plate_{platehint}.png"
             thumbnail_path = os.path.join(
