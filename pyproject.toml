@@ -19,7 +19,7 @@ requires-python = ">=3.11, <4"
 
 # any additional requirements (besides OctoPrint) should be listed here
 dependencies = [
-  "bambu-printer-manager>=1.0.0",
+  "bambu-printer-manager>=1.0.2",
   "typing-extensions ; python_version<'3.12'",
 ]
 
