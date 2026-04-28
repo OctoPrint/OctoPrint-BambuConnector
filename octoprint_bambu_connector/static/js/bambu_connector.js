@@ -63,6 +63,25 @@ $(function () {
             });
         };
 
+        self.onRenderParametersForConnector = (connector, parameters) => {
+            if (connector !== "bambu") return false;
+
+            return [
+                {
+                    name: gettext("Host"),
+                    value: parameters.host || "-"
+                },
+                {
+                    name: gettext("Serial"),
+                    value: parameters.serial || "-"
+                },
+                {
+                    name: gettext("Access Code"),
+                    value: parameters.access_code ? "*****" : "-"
+                }
+            ];
+        };
+
         self.cancelPrintOptions = () => {
             self.hidePrintOptions();
         };
