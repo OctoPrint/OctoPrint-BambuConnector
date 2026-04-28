@@ -82,6 +82,11 @@ $(function () {
             ];
         };
 
+        self.onReevaluateConnectionParameters = (connector) => {
+            if (connector !== "bambu") return;
+            return true;
+        };
+
         self.cancelPrintOptions = () => {
             self.hidePrintOptions();
         };
