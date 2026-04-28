@@ -746,7 +746,7 @@ class ConnectedBambuPrinter(
         try:
             thumbnail_file = (
                 self.current_job.params.get("thumbnail", "plate_1.png")
-                if path == self.current_job.path
+                if self.current_job and path == self.current_job.path
                 else os.listdir(thumbnails_path)[0]
             )
             thumbnail_path = os.path.join(
