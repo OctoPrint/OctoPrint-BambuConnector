@@ -13,7 +13,7 @@ import zoneinfo
 from typing import IO, TYPE_CHECKING, Any, Optional
 
 import bpm
-from bpm.bambutools import PlateType
+from bpm.bambutools import PlateType, ServiceState
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations
 from octoprint.filemanager.storage import (
@@ -394,8 +394,18 @@ class ConnectedBambuPrinter(
             self.set_state(ConnectedPrinterState.CLOSED_WITH_ERROR, error=str(exc))
             return False
 
-        self._client = printer
-        return True
+        # we just started the connection, loop until service_state is established
+        while printer.service_state == ServiceState.NO_STATE:
+            time.sleep(0.1)
+
+        if printer.service_state == ServiceState.CONNECTED:
+            self._client = printer
+            return True
+
+        self.set_state(
+            ConnectedPrinterState.CLOSED, error="Unable to connect to printer"
+        )
+        return False
 
     def disconnect(self, *args, **kwargs):
         if self._client is None:
@@ -598,10 +608,7 @@ class ConnectedBambuPrinter(
     def refresh_printer_files(
         self, blocking=False, timeout=30, *args, **kwargs
     ) -> None:
-        if (
-            not self._client
-            or not self._client.service_state == bpm.bambuprinter.ServiceState.CONNECTED
-        ):
+        if not self._client or not self._client.service_state == ServiceState.CONNECTED:
             self._files = []
             return
 
@@ -955,7 +962,7 @@ class ConnectedBambuPrinter(
         new_state = None
         error = None
 
-        if self._connection_state == bpm.bambuprinter.ServiceState.CONNECTED:
+        if self._connection_state == ServiceState.CONNECTED:
             if self._gcode_state in PRINTING_GCODE_STATES:
                 if self._gcode_state == GcodeState.PREPARE:
                     new_state = ConnectedPrinterState.STARTING
