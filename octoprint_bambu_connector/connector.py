@@ -289,7 +289,7 @@ class ConnectedBambuPrinter(
             self._event_bus.fire(
                 Events.CONNECTED,
                 {
-                    "connector": self.name,
+                    "connector": self.connector,
                     "host": self._host,
                     "serial": self._serial,
                     "access_code": self._access_code is not None,
