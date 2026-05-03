@@ -510,6 +510,16 @@ class ConnectedBambuPrinter(
     def supports_job(self, job: PrintJob) -> bool:
         return job.storage == FileDestinations.PRINTER
 
+    def create_job(self, path: str, owner: str = None, params: dict = None) -> PrintJob:
+        plate = 1
+        if params:
+            plate = params.pop("plate_number", plate)
+
+        job = super().create_job(path, owner=owner, params=params)
+        job.plate = plate
+
+        return job
+
     def start_print(
         self, pos=None, user=None, tags=None, params: dict = None, *args, **kwargs
     ):
@@ -544,14 +554,14 @@ class ConnectedBambuPrinter(
         perform_bed_leveling = fetch_param("perform_bed_leveling", converter=bool)
         perform_flow_cali = fetch_param("perform_flow_cali", converter=bool)
         enable_timelapse = fetch_param("enable_timelapse", converter=bool)
-        plate_number = fetch_param("plate_number", converter=int)
+        self.current_job.plate = fetch_param("plate_number", converter=int)
 
         self.set_state(ConnectedPrinterState.STARTING)
 
         # TODO: deal with ams_mapping, for now will default to what is set in sliced file
         self._client.print_3mf_file(
             name=path,
-            plate=plate_number,
+            plate=self.current_job.plate,
             bed=PlateType.AUTO,  # Always assume the sliced gcode file has this set correctly
             use_ams=use_ams,
             ams_mapping="",
@@ -723,12 +733,12 @@ class ConnectedBambuPrinter(
         return self._thumbs_cache_folder and path.endswith(".3mf")
 
     def get_thumbnail(
-        self, path, sizehint=None, *args, **kwargs
+        self, path, platehint=None, sizehint=None, *args, **kwargs
     ) -> Optional[StorageThumbnail]:
         return self._to_storage_thumbnail(path)
 
     def download_thumbnail(
-        self, path, sizehint=None, *args, **kwargs
+        self, path, platehint=None, sizehint=None, *args, **kwargs
     ) -> Optional[tuple[StorageThumbnail, IO]]:
         thumbnails_path = self._thumbnails_path(path)
         if not os.path.exists(thumbnails_path) or len(os.listdir(thumbnails_path)) == 0:
@@ -743,12 +753,11 @@ class ConnectedBambuPrinter(
         except OSError:
             pass
 
+        if platehint is None:
+            platehint = 1
+
         try:
-            thumbnail_file = (
-                self.current_job.params.get("thumbnail", "plate_1.png")
-                if self.current_job and path == self.current_job.path
-                else os.listdir(thumbnails_path)[0]
-            )
+            thumbnail_file = f"plate_{platehint}.png"
             thumbnail_path = os.path.join(
                 thumbnails_path,
                 thumbnail_file,
@@ -885,9 +894,24 @@ class ConnectedBambuPrinter(
         else:
             return
 
-        if self.current_job and (
-            self.current_job.path == current_path
-            or self.current_job.storage != FileDestinations.PRINTER
+        plate = printer.active_job_info.plate_num
+        if plate < 0:
+            plate_match = re.match(
+                r".+plate_(?P<plate>\d+).gcode",
+                printer.active_job_info.gcode_file,
+            )
+            if plate_match:
+                plate = int(plate_match.group("plate"))
+            else:
+                plate = 1
+
+        if (
+            self.current_job
+            and (
+                self.current_job.path == current_path
+                or self.current_job.storage != FileDestinations.PRINTER
+            )
+            and (self.current_job.plate == plate)
         ):
             return
 
@@ -902,19 +926,13 @@ class ConnectedBambuPrinter(
                     date = f.date
                     break
 
-        # better way to do this?
-        thumbnail_path = (
-            os.path.splitext(os.path.split(printer.active_job_info.gcode_file)[1])[0]
-            + ".png"
-        )
-
         job = PrintJob(
             storage=FileDestinations.PRINTER,
             path=current_path,
             display=display,
             size=size,
             date=date,
-            params={"thumbnail": thumbnail_path},
+            plate=plate,
         )
 
         self.set_job(job)
