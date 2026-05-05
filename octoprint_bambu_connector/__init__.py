@@ -46,6 +46,9 @@ class BambuConnectorPlugin(
         ConnectedBambuPrinter._file_manager = self._file_manager
         ConnectedBambuPrinter._plugin_manager = self._plugin_manager
         ConnectedBambuPrinter._plugin_settings = self._settings
+        ConnectedBambuPrinter._bpm_cache_folder = os.path.join(
+            self.get_plugin_data_folder(), "bpm_cache"
+        )
         ConnectedBambuPrinter._thumbs_cache_folder = os.path.join(
             self.get_plugin_data_folder(), "thumbs"
         )
