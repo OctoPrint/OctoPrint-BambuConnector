@@ -392,6 +392,18 @@ class ConnectedBambuPrinter(
             printer.on_update = self._on_bpm_update
 
             printer.start_session()
+
+            if printer.service_state != bpm.bambuprinter.ServiceState.CONNECTED:
+                internal_exception = printer.internalException
+                msg = "Connection failed"
+                if isinstance(internal_exception, TimeoutError):
+                    raise RuntimeError(f"{msg}: Timeout") from internal_exception
+                elif internal_exception:
+                    raise RuntimeError(
+                        f"{msg}: {internal_exception!s}"
+                    ) from internal_exception
+                else:
+                    raise RuntimeError(msg)
         except Exception as exc:
             self._logger.exception(
                 "Error while connecting to bambu printer through bpm"
