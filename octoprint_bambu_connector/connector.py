@@ -4,6 +4,7 @@ import io
 import logging
 import math
 import os
+import pathlib
 import re
 import tempfile
 import threading
@@ -213,6 +214,7 @@ class ConnectedBambuPrinter(
     _file_manager: "FileManager" = None
     _plugin_manager: "PluginManager" = None
     _plugin_settings: "PluginSettings" = None
+    _bpm_cache_folder: str = None
     _thumbs_cache_folder: str = None
     # /injected
 
@@ -377,10 +379,13 @@ class ConnectedBambuPrinter(
         try:
             self._logger.info("Connecting to Bambu")
 
+            bpm_cache_path = pathlib.Path(self._bpm_cache_folder)
+
             config = bpm.bambuconfig.BambuConfig(
                 hostname=self._host,
                 access_code=self._access_code,
                 serial_number=self._serial,
+                bpm_cache_path=bpm_cache_path,
             )
             printer = bpm.bambuprinter.BambuPrinter(config=config)
 
