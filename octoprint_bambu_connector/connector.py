@@ -108,6 +108,8 @@ PRINTING_GCODE_STATES = (
     GcodeState.RUNNING,
 )
 
+INITIAL_STATE_TIMEOUT = 30
+
 
 class JobStage(enum.Enum):
     PRINTING = 0
@@ -231,9 +233,7 @@ class ConnectedBambuPrinter(
 
         self._state = ConnectedPrinterState.CLOSED
         self._state_context: Optional[tuple[ConnectedPrinterState, str]] = None
-        self._connection_state: bpm.bambuprinter.ServiceState = (
-            bpm.bambuprinter.ServiceState.NO_STATE
-        )
+        self._connection_state: ServiceState = ServiceState.NO_STATE
         self._gcode_state = GcodeState.UNKNOWN
         self._job_stage = JobStage.UNKNOWN
 
@@ -392,6 +392,24 @@ class ConnectedBambuPrinter(
             printer.on_update = self._on_bpm_update
 
             printer.start_session()
+
+            start = time.monotonic()
+            while printer.service_state == ServiceState.NO_STATE:
+                # await *some* state
+                time.sleep(0.1)
+                if time.monotonic() > start + INITIAL_STATE_TIMEOUT:
+                    # if there's still no state, something has probably gone terribly wrong
+                    break
+
+            if printer.service_state != ServiceState.CONNECTED:
+                internal_exception = printer.internalException
+                msg = "Connection failed"
+                if internal_exception:
+                    raise RuntimeError(
+                        f"{msg}: {internal_exception!s}"
+                    ) from internal_exception
+                else:
+                    raise RuntimeError(msg)
         except Exception as exc:
             self._logger.exception(
                 "Error while connecting to bambu printer through bpm"
@@ -399,18 +417,8 @@ class ConnectedBambuPrinter(
             self.set_state(ConnectedPrinterState.CLOSED_WITH_ERROR, error=str(exc))
             return False
 
-        # we just started the connection, loop until service_state is established
-        while printer.service_state == ServiceState.NO_STATE:
-            time.sleep(0.1)
-
-        if printer.service_state == ServiceState.CONNECTED:
-            self._client = printer
-            return True
-
-        self.set_state(
-            ConnectedPrinterState.CLOSED, error="Unable to connect to printer"
-        )
-        return False
+        self._client = printer
+        return True
 
     def disconnect(self, *args, **kwargs):
         if self._client is None:
