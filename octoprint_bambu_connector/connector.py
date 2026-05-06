@@ -1012,7 +1012,9 @@ class ConnectedBambuPrinter(
 
         elif self._connection_state == bpm.bambuprinter.ServiceState.DISCONNECTED:
             if not self._disconnecting and not self._disconnect_thread:
-                self._logger.warning("Lost connection to printer")
+                message = "Lost connection to printer"
+                self._logger.warning(message)
+                self._listener.on_printer_logs(message)
                 self._disconnect_thread = threading.Thread(
                     target=self.disconnect
                 ).start()  # decouple this call from the status update thread or bpm will run into an issue on thread join in `quit`
