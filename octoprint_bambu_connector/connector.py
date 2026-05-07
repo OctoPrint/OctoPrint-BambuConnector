@@ -14,7 +14,7 @@ import zoneinfo
 from typing import IO, TYPE_CHECKING, Any, Optional
 
 import bpm
-from bpm.bambutools import PlateType
+from bpm.bambutools import PlateType, ServiceState
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations
 from octoprint.filemanager.storage import (
@@ -108,6 +108,8 @@ PRINTING_GCODE_STATES = (
     GcodeState.PREPARE,
     GcodeState.RUNNING,
 )
+
+INITIAL_STATE_TIMEOUT = 30
 
 
 class JobStage(enum.Enum):
@@ -232,9 +234,7 @@ class ConnectedBambuPrinter(
 
         self._state = ConnectedPrinterState.CLOSED
         self._state_context: Optional[tuple[ConnectedPrinterState, str]] = None
-        self._connection_state: bpm.bambuprinter.ServiceState = (
-            bpm.bambuprinter.ServiceState.NO_STATE
-        )
+        self._connection_state: ServiceState = ServiceState.NO_STATE
         self._gcode_state = GcodeState.UNKNOWN
         self._job_stage = JobStage.UNKNOWN
 
@@ -397,6 +397,24 @@ class ConnectedBambuPrinter(
             printer.on_update = self._on_bpm_update
 
             printer.start_session()
+
+            start = time.monotonic()
+            while printer.service_state == ServiceState.NO_STATE:
+                # await *some* state
+                time.sleep(0.1)
+                if time.monotonic() > start + INITIAL_STATE_TIMEOUT:
+                    # if there's still no state, something has probably gone terribly wrong
+                    break
+
+            if printer.service_state != ServiceState.CONNECTED:
+                internal_exception = printer.internalException
+                msg = "Connection failed"
+                if internal_exception:
+                    raise RuntimeError(
+                        f"{msg}: {internal_exception!s}"
+                    ) from internal_exception
+                else:
+                    raise RuntimeError(msg)
         except Exception as exc:
             self._logger.exception(
                 "Error while connecting to bambu printer through bpm"
@@ -622,10 +640,7 @@ class ConnectedBambuPrinter(
     def refresh_printer_files(
         self, blocking=False, timeout=30, *args, **kwargs
     ) -> None:
-        if (
-            not self._client
-            or not self._client.service_state == bpm.bambuprinter.ServiceState.CONNECTED
-        ):
+        if not self._client or not self._client.service_state == ServiceState.CONNECTED:
             self._files = []
             return
 
@@ -979,7 +994,7 @@ class ConnectedBambuPrinter(
         new_state = None
         error = None
 
-        if self._connection_state == bpm.bambuprinter.ServiceState.CONNECTED:
+        if self._connection_state == ServiceState.CONNECTED:
             if self._gcode_state in PRINTING_GCODE_STATES:
                 if self._gcode_state == GcodeState.PREPARE:
                     new_state = ConnectedPrinterState.STARTING
@@ -1010,7 +1025,7 @@ class ConnectedBambuPrinter(
             elif self._gcode_state == GcodeState.OFFLINE:
                 new_state = ConnectedPrinterState.CLOSED
 
-        elif self._connection_state == bpm.bambuprinter.ServiceState.DISCONNECTED:
+        elif self._connection_state == ServiceState.DISCONNECTED:
             if not self._disconnecting and not self._disconnect_thread:
                 message = "Lost connection to printer"
                 self._logger.warning(message)
@@ -1019,7 +1034,7 @@ class ConnectedBambuPrinter(
                     target=self.disconnect
                 ).start()  # decouple this call from the status update thread or bpm will run into an issue on thread join in `quit`
 
-        elif self._connection_state == bpm.bambuprinter.ServiceState.QUIT:
+        elif self._connection_state == ServiceState.QUIT:
             if self.state not in (
                 ConnectedPrinterState.CLOSED,
                 ConnectedPrinterState.CLOSED_WITH_ERROR,
