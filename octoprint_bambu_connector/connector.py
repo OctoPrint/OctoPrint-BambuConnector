@@ -36,6 +36,7 @@ from octoprint.printer.connection import (
 )
 from octoprint.printer.job import PrintJob
 from octoprint.schema import BaseModel
+from octoprint.util.version import is_version_compatible, safe_get_package_version
 from octoprint.util.tz import LOCAL_TZ
 
 GCODE_STATE_LOOKUP = {
@@ -238,6 +239,8 @@ class ConnectedBambuPrinter(
         self._job_stage = JobStage.UNKNOWN
 
         self._error = None
+        self._disconnecting = False
+        self._disconnect_thread = None
 
         self._progress: JobProgress = None
         self._old_progress: int = None
@@ -255,6 +258,8 @@ class ConnectedBambuPrinter(
                 self._logger.exception(
                     f"Cannot load configured printer timezone {timezone_str}, falling back to server timezone"
                 )
+
+        self._bpm_version = safe_get_package_version("bambu-printer-manager")
 
     @property
     def connection_parameters(self):
@@ -423,9 +428,23 @@ class ConnectedBambuPrinter(
     def disconnect(self, *args, **kwargs):
         if self._client is None:
             return
+
+        if self._disconnecting:
+            return
+        self._disconnecting = True
+
         eventManager().fire(Events.DISCONNECTING)
+        if is_version_compatible(self._bpm_version, "<=1.0.2"):
+            # workaround until synman/bambu-printer-manager#54 is merged
+            self._client._client.disconnect()
         self._client.quit()
-        self.set_state(ConnectedPrinterState.CLOSED)
+        self.set_state(
+            ConnectedPrinterState.CLOSED
+        )  # should already have been set through self._client.quit(), but better safe than sorry
+
+        # clean up references
+        self._client.on_update = None
+        self._client = None
 
     def emergency_stop(self, *args, **kwargs):
         self.commands("M112", tags=kwargs.get("tags", set()))
@@ -1006,13 +1025,26 @@ class ConnectedBambuPrinter(
             elif self._gcode_state == GcodeState.OFFLINE:
                 new_state = ConnectedPrinterState.CLOSED
 
-        else:
-            internal_error = printer.internalException
-            if internal_error:
-                new_state = ConnectedPrinterState.CLOSED_WITH_ERROR
-                error = str(internal_error)
-            else:
-                new_state = ConnectedPrinterState.CLOSED
+        elif self._connection_state == bpm.bambuprinter.ServiceState.DISCONNECTED:
+            if not self._disconnecting and not self._disconnect_thread:
+                message = "Lost connection to printer"
+                self._logger.warning(message)
+                self._listener.on_printer_logs(message)
+                self._disconnect_thread = threading.Thread(
+                    target=self.disconnect
+                ).start()  # decouple this call from the status update thread or bpm will run into an issue on thread join in `quit`
+
+        elif self._connection_state == bpm.bambuprinter.ServiceState.QUIT:
+            if self.state not in (
+                ConnectedPrinterState.CLOSED,
+                ConnectedPrinterState.CLOSED_WITH_ERROR,
+            ):
+                internal_error = printer.internalException
+                if internal_error:
+                    new_state = ConnectedPrinterState.CLOSED_WITH_ERROR
+                    error = str(internal_error)
+                else:
+                    new_state = ConnectedPrinterState.CLOSED
 
         if new_state:
             self._state_context = (new_state, printer.active_job_info.stage_name)
