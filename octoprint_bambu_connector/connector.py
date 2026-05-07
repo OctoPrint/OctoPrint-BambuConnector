@@ -1025,7 +1025,7 @@ class ConnectedBambuPrinter(
             elif self._gcode_state == GcodeState.OFFLINE:
                 new_state = ConnectedPrinterState.CLOSED
 
-        elif self._connection_state == bpm.bambuprinter.ServiceState.DISCONNECTED:
+        elif self._connection_state == ServiceState.DISCONNECTED:
             if not self._disconnecting and not self._disconnect_thread:
                 message = "Lost connection to printer"
                 self._logger.warning(message)
@@ -1034,7 +1034,7 @@ class ConnectedBambuPrinter(
                     target=self.disconnect
                 ).start()  # decouple this call from the status update thread or bpm will run into an issue on thread join in `quit`
 
-        elif self._connection_state == bpm.bambuprinter.ServiceState.QUIT:
+        elif self._connection_state == ServiceState.QUIT:
             if self.state not in (
                 ConnectedPrinterState.CLOSED,
                 ConnectedPrinterState.CLOSED_WITH_ERROR,
