@@ -990,6 +990,13 @@ class ConnectedBambuPrinter(
 
         if self._job_stage != old_stage and printer.active_job_info.stage_name:
             self._to_terminal(f"Current stage: {printer.active_job_info.stage_name}")
+            eventManager().fire(
+                Events.CHART_MARKED,
+                {
+                    "type": "bambu_connector_job_stage",
+                    "label": printer.active_job_info.stage_name,
+                },
+            )
 
         new_state = None
         error = None
