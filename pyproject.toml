@@ -36,7 +36,7 @@ include = [
 bambu_connector = "octoprint_bambu_connector"
 
 [project.urls]
-Homepage = "https://github.com/jneilliii/OctoPrint-BambuConnector"
+Homepage = "https://github.com/OctoPrint/OctoPrint-BambuConnector"
 
 [project.optional-dependencies]
 develop = [
