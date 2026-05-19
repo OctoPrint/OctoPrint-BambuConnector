@@ -30,11 +30,13 @@ from octoprint.printer import (
 from octoprint.printer.connection import (
     OPERATIONAL_STATES,
     PRINTING_STATES,
+    CLOSED_STATES,
     ConnectedPrinter,
     ConnectedPrinterListenerMixin,
     ConnectedPrinterState,
 )
 from octoprint.printer.job import PrintJob
+from octoprint.printer import FirmwareInformation
 from octoprint.schema import BaseModel
 from octoprint.util.version import is_version_compatible, safe_get_package_version
 from octoprint.util.tz import LOCAL_TZ
@@ -1056,6 +1058,18 @@ class ConnectedBambuPrinter(
         if new_state:
             self._state_context = (new_state, printer.active_job_info.stage_name)
             self.set_state(new_state, error=error)
+
+            if new_state in CLOSED_STATES:
+                self.firmware_info = None
+            elif not self.firmware_info:
+                self.firmware_info = FirmwareInformation(
+                    name="Bambu",
+                    data={
+                        "model": printer.config.printer_model.name,
+                        "version": printer.config.firmware_version,
+                        "ams_firmware_version": printer.config.ams_firmware_version,
+                    },
+                )
 
     def _update_progress_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
         if self.current_job is None:
