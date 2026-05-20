@@ -247,6 +247,7 @@ class ConnectedBambuPrinter(
         self._progress: JobProgress = None
         self._old_progress: int = None
         self._old_time_remaining: int = None
+        self._last_printer_job: tuple[str, int] = None
 
         self._files: list[PrinterFile] = []
 
@@ -906,8 +907,10 @@ class ConnectedBambuPrinter(
             return
 
         try:
+            self._update_state_from_state(
+                printer
+            )  # eval state before job, so current state is known in job eval
             self._update_job_from_state(printer)
-            self._update_state_from_state(printer)
             self._update_progress_from_state(printer)
             self._update_temperatures_from_state(printer)
         except Exception:
@@ -948,6 +951,13 @@ class ConnectedBambuPrinter(
                 plate = int(plate_match.group("plate"))
             else:
                 plate = 1
+
+        if (
+            self._last_printer_job == (current_path, plate)
+            and self.state not in PRINTING_STATES
+        ):
+            return
+        self._last_printer_job = (current_path, plate)
 
         if (
             self.current_job
