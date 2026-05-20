@@ -435,7 +435,6 @@ class ConnectedBambuPrinter(
             return
         self._disconnecting = True
 
-        eventManager().fire(Events.DISCONNECTING)
         if is_version_compatible(self._bpm_version, "<=1.0.2"):
             # workaround until synman/bambu-printer-manager#54 is merged
             self._client._client.disconnect()
