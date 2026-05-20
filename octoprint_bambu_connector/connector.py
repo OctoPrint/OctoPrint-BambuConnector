@@ -311,19 +311,23 @@ class ConnectedBambuPrinter(
                 self.refresh_printer_files(blocking=True)
                 self._listener.on_printer_files_available(True)
 
-            if state in PRINTING_STATES:
-                if old_state not in PRINTING_STATES and not self.current_job:
+            if state in PRINTING_STATES and old_state not in PRINTING_STATES:
+                # we went from not printing to printing -> started
+                if not self.current_job:
                     # we went from not printing to printing without having a job
                     # -> this was triggered by the printer!
                     self.set_job(
                         PrintJob(
-                            storage=FileDestinations.PRINTER, path="???", display="???"
+                            storage=FileDestinations.PRINTER,
+                            path="???",
+                            display="???",
                         )
                     )
                     self._listener.on_printer_job_changed(self.current_job)
+
                 self._listener.on_printer_job_started()
 
-            elif old_state in PRINTING_STATES:
+            elif old_state in PRINTING_STATES and state not in PRINTING_STATES:
                 # we went from printing to not printing, so the current job is done
                 # one way or the other
 
